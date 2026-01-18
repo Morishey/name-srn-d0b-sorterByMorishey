@@ -7,8 +7,9 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [results, setResults] = useState([]);
   const [processing, setProcessing] = useState(false);
+  const [includeSeparators, setIncludeSeparators] = useState(true); // New state for toggle
 
-  const CHUNK_SIZE = 10000; // Increased chunk size for better performance
+  const CHUNK_SIZE = 10000;
 
   const handleFile = useCallback((e) => {
     const f = e.target.files[0];
@@ -31,7 +32,6 @@ export default function App() {
     setStatus("Processing...");
     setProgress(0);
     
-    // Use web workers or chunked processing for large files
     const processFileChunked = async (text) => {
       const lines = text.split("\n");
       const cutoff = new Date("1940-01-01");
@@ -43,7 +43,6 @@ export default function App() {
         const start = chunkIndex * CHUNK_SIZE;
         const chunk = lines.slice(start, start + CHUNK_SIZE);
         
-        // Process chunk in microtask
         await new Promise(resolve => {
           queueMicrotask(() => {
             for (const line of chunk) {
@@ -52,7 +51,6 @@ export default function App() {
               const cols = line.trim().split("\t");
               if (cols.length < 3) continue;
 
-              // Find DOB efficiently
               let dob = null;
               for (const col of cols) {
                 if (/^\d{4}-\d{2}-\d{2}$/.test(col) && !col.includes("-00")) {
@@ -65,7 +63,6 @@ export default function App() {
               const dobDate = new Date(dob);
               if (dobDate < cutoff) continue;
 
-              // Find SSN efficiently
               let ssn = null;
               for (const col of cols) {
                 if (/^\d{3}-\d{2}-\d{4}$/.test(col)) {
@@ -78,7 +75,6 @@ export default function App() {
               const key = `${ssn}|${dob}`;
               if (seenKeys.has(key)) continue;
 
-              // Build name from specific columns
               const nameParts = [];
               if (cols[1]) nameParts.push(cols[1]);
               if (cols[3]) nameParts.push(cols[3]);
@@ -94,7 +90,6 @@ export default function App() {
           });
         });
 
-        // Update progress less frequently for better performance
         if (chunkIndex % 5 === 0 || chunkIndex === totalChunks - 1) {
           setProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
         }
@@ -107,7 +102,6 @@ export default function App() {
       const text = await file.text();
       const output = await processFileChunked(text);
 
-      // Sort results
       output.sort((a, b) => {
         const nameCompare = a.name.localeCompare(b.name);
         if (nameCompare !== 0) return nameCompare;
@@ -131,15 +125,67 @@ export default function App() {
     }
   }, [file]);
 
+  // Function to extract first and last name from full name
+  const extractFirstAndLastName = useCallback((fullName) => {
+    const parts = fullName.trim().split(" ");
+    const firstName = parts[0] || "";
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : "";
+    return { firstName, lastName };
+  }, []);
+
+  // Function to generate content WITH separators
+  const generateContentWithSeparators = useCallback(() => {
+    if (results.length === 0) return "";
+    
+    const contentLines = [];
+    let lastFirstName = "";
+    let lastLastName = "";
+    
+    results.forEach((row, index) => {
+      const { firstName, lastName } = extractFirstAndLastName(row.name);
+      
+      // Add separator if either first OR last name changes
+      const isFirstNameChange = index > 0 && firstName !== lastFirstName;
+      const isLastNameChange = index > 0 && lastName !== lastLastName;
+      const shouldAddSeparator = includeSeparators && (isFirstNameChange || isLastNameChange);
+      
+      if (shouldAddSeparator) {
+        const changeTypes = [];
+        if (isFirstNameChange) changeTypes.push("first name");
+        if (isLastNameChange) changeTypes.push("last name");
+        
+        const changeType = changeTypes.join(" or ");
+        contentLines.push(`==================================== ${changeType} change: ${firstName} ${lastName}`);
+      }
+      
+      // Add the data row
+      contentLines.push(`${row.name}|${row.dob}|${row.ssn}`);
+      
+      lastFirstName = firstName;
+      lastLastName = lastName;
+    });
+    
+    return contentLines.join("\n");
+  }, [results, extractFirstAndLastName, includeSeparators]);
+
+  // Function to generate content WITHOUT separators (original format)
+  const generateContentWithoutSeparators = useCallback(() => {
+    return results
+      .map(r => `${r.name}|${r.dob}|${r.ssn}`)
+      .join("\n");
+  }, [results]);
+
   const saveFile = useCallback(() => {
     if (results.length === 0) return;
 
-    const content = results
-      .map(r => `${r.name}|${r.dob}|${r.ssn}`)
-      .join("\n");
+    // Use the appropriate content generator based on toggle
+    const content = includeSeparators 
+      ? generateContentWithSeparators()
+      : generateContentWithoutSeparators();
 
     const base = fileName.replace(/\.txt$/i, "");
-    const finalName = `${base}_sorted.txt`;
+    const suffix = includeSeparators ? "_sorted_with_separators" : "_sorted";
+    const finalName = `${base}${suffix}.txt`;
 
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -152,15 +198,84 @@ export default function App() {
     document.body.removeChild(a);
 
     URL.revokeObjectURL(url);
-  }, [results, fileName]);
+  }, [results, fileName, includeSeparators, generateContentWithSeparators, generateContentWithoutSeparators]);
 
-  const previewRows = useMemo(() => {
-    return results.slice(0, results.length > 1000 ? 1000 : results.length);
-  }, [results]);
+  // Function to get preview rows with separators
+  const getPreviewRowsWithSeparators = useCallback(() => {
+    if (results.length === 0) return [];
+    
+    const previewRows = results.slice(0, results.length > 1000 ? 1000 : results.length);
+    const rowsWithSeparators = [];
+    let lastFirstName = "";
+    let lastLastName = "";
+    
+    previewRows.forEach((row, index) => {
+      const { firstName, lastName } = extractFirstAndLastName(row.name);
+      
+      const isFirstNameChange = index > 0 && firstName !== lastFirstName;
+      const isLastNameChange = index > 0 && lastName !== lastLastName;
+      const shouldAddSeparator = includeSeparators && (isFirstNameChange || isLastNameChange);
+      
+      if (shouldAddSeparator) {
+        const changeTypes = [];
+        if (isFirstNameChange) changeTypes.push("first name");
+        if (isLastNameChange) changeTypes.push("last name");
+        
+        rowsWithSeparators.push({
+          type: 'separator',
+          id: `sep-${index}`,
+          firstName: firstName,
+          lastName: lastName,
+          fullName: row.name,
+          changeType: changeTypes.join(" or "),
+          rowNumber: index
+        });
+      }
+      
+      rowsWithSeparators.push({
+        type: 'data',
+        ...row,
+        id: `row-${index}`,
+        firstName: firstName,
+        lastName: lastName,
+        rowNumber: index + 1
+      });
+      
+      lastFirstName = firstName;
+      lastLastName = lastName;
+    });
+    
+    return rowsWithSeparators;
+  }, [results, extractFirstAndLastName, includeSeparators]);
 
   const fileSizeMB = useMemo(() => {
     return file ? (file.size / (1024 * 1024)).toFixed(2) : 0;
   }, [file]);
+
+  // Get rows with separators
+  const previewRowsWithSeparators = useMemo(() => 
+    getPreviewRowsWithSeparators(), 
+    [getPreviewRowsWithSeparators]
+  );
+
+  // Count unique first names and last names
+  const { uniqueFirstNames, uniqueLastNames } = useMemo(() => {
+    if (results.length === 0) return { uniqueFirstNames: 0, uniqueLastNames: 0 };
+    
+    const firstNames = new Set();
+    const lastNames = new Set();
+    
+    results.forEach(result => {
+      const { firstName, lastName } = extractFirstAndLastName(result.name);
+      if (firstName) firstNames.add(firstName);
+      if (lastName) lastNames.add(lastName);
+    });
+    
+    return {
+      uniqueFirstNames: firstNames.size,
+      uniqueLastNames: lastNames.size
+    };
+  }, [results, extractFirstAndLastName]);
 
   return (
     <div style={styles.page}>
@@ -215,15 +330,33 @@ export default function App() {
           </button>
 
           {results.length > 0 && (
-            <button
-              onClick={saveFile}
-              style={{
-                ...styles.button,
-                ...styles.successButton
-              }}
-            >
-              💾 Save Sorted File ({results.length} records)
-            </button>
+            <div style={styles.saveControls}>
+              <div style={styles.separatorToggle}>
+                <label style={styles.toggleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={includeSeparators}
+                    onChange={(e) => setIncludeSeparators(e.target.checked)}
+                    style={styles.toggleInput}
+                  />
+                  <span style={styles.toggleSlider}></span>
+                  <span style={styles.toggleText}>
+                    Include separators in output
+                  </span>
+                </label>
+              </div>
+              
+              <button
+                onClick={saveFile}
+                style={{
+                  ...styles.button,
+                  ...styles.successButton
+                }}
+              >
+                💾 Save Sorted File ({results.length} records)
+                {includeSeparators && " with separators"}
+              </button>
+            </div>
           )}
         </div>
 
@@ -247,13 +380,19 @@ export default function App() {
         {results.length > 0 && (
           <div style={styles.resultsSection}>
             <div style={styles.resultsHeader}>
-              <h3>Preview ({previewRows.length} of {results.length} rows)</h3>
+              <h3>
+                Preview ({previewRowsWithSeparators.filter(r => r.type === 'data').length} of {results.length} rows)
+                {!includeSeparators && " (separators disabled)"}
+              </h3>
               <div style={styles.stats}>
                 <span style={styles.statBadge}>
-                  📊 {results.length.toLocaleString()} records
+                  👤 {uniqueFirstNames} unique first names
                 </span>
                 <span style={styles.statBadge}>
-                  ⏱️ {new Date().toLocaleTimeString()}
+                  🏷️ {uniqueLastNames} unique last names
+                </span>
+                <span style={styles.statBadge}>
+                  📊 {results.length} total records
                 </span>
               </div>
             </div>
@@ -269,21 +408,84 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {previewRows.map((r, i) => (
-                    <tr key={i} style={i % 2 === 0 ? styles.evenRow : styles.oddRow}>
-                      <td style={styles.td}>{i + 1}</td>
-                      <td style={styles.td}>{r.name}</td>
-                      <td style={styles.td}>{r.dob}</td>
-                      <td style={styles.td}>{r.ssn}</td>
-                    </tr>
-                  ))}
+                  {previewRowsWithSeparators.map((item) => {
+                    if (item.type === 'separator') {
+                      return (
+                        <tr key={item.id} style={styles.separatorRow}>
+                          <td colSpan="4" style={styles.separatorCell}>
+                            <div style={styles.separatorContent}>
+                              <div style={styles.separatorLine}>
+                                ====================================
+                              </div>
+                              <div style={styles.separatorInfo}>
+                                <div style={styles.nameChangeBadge}>
+                                  {item.changeType} change
+                                </div>
+                                <div style={styles.nameDisplay}>
+                                  {item.firstName && (
+                                    <span style={styles.firstNameBadge}>
+                                      {item.firstName}
+                                    </span>
+                                  )}
+                                  {item.lastName && (
+                                    <span style={styles.lastNameBadge}>
+                                      {item.lastName}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    
+                    return (
+                      <tr key={item.id} style={item.rowNumber % 2 === 0 ? styles.evenRow : styles.oddRow}>
+                        <td style={styles.td}>{item.rowNumber}</td>
+                        <td style={styles.td}>
+                          <div style={styles.nameCell}>
+                            <div style={styles.fullName}>{item.name}</div>
+                            <div style={styles.nameParts}>
+                              <span style={styles.namePartLabel}>First:</span>
+                              <span style={styles.firstNamePart}>{item.firstName}</span>
+                              <span style={styles.namePartLabel}>Last:</span>
+                              <span style={styles.lastNamePart}>{item.lastName}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={styles.td}>{item.dob}</td>
+                        <td style={styles.td}>{item.ssn}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+            </div>
+            
+            <div style={styles.legend}>
+              <div style={styles.legendTitle}>Output Format:</div>
+              <div style={styles.legendRules}>
+                <div style={styles.legendRule}>
+                  <div style={styles.legendLineSample}>= = = = = = =</div>
+                  <span>Separator line (added when first OR last name changes)</span>
+                </div>
+                <div style={styles.legendRule}>
+                  <div style={styles.dataSample}>John Doe|1990-01-15|123-45-6789</div>
+                  <span>Data line format: Name|DOB|SSN</span>
+                </div>
+                <div style={styles.legendNote}>
+                  {includeSeparators 
+                    ? "✓ Separators WILL be included in the saved file" 
+                    : "✗ Separators will NOT be included in the saved file"}
+                </div>
+              </div>
             </div>
             
             {results.length > 1000 && (
               <p style={styles.note}>
                 Showing first 1,000 rows. Full file will be saved with all {results.length.toLocaleString()} records.
+                {includeSeparators && " Includes separators between name groups."}
               </p>
             )}
           </div>
@@ -362,10 +564,11 @@ const styles = {
   },
   controls: {
     display: "flex",
-    gap: "12px",
+    flexDirection: "column",
+    gap: "16px",
     justifyContent: "center",
     marginBottom: "32px",
-    flexWrap: "wrap"
+    alignItems: "center"
   },
   button: {
     padding: "14px 28px",
@@ -403,6 +606,38 @@ const styles = {
       transform: "none",
       boxShadow: "none"
     }
+  },
+  saveControls: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%"
+  },
+  separatorToggle: {
+    marginBottom: "8px"
+  },
+  toggleLabel: {
+    display: "flex",
+    alignItems: "center",
+    cursor: "pointer",
+    gap: "10px"
+  },
+  toggleInput: {
+    display: "none"
+  },
+  toggleSlider: {
+    width: "50px",
+    height: "26px",
+    backgroundColor: "#e2e8f0",
+    borderRadius: "34px",
+    position: "relative",
+    transition: "background-color 0.2s"
+  },
+  toggleText: {
+    fontSize: "14px",
+    color: "#4a5568",
+    fontWeight: "500"
   },
   spinner: {
     width: "16px",
@@ -471,7 +706,8 @@ const styles = {
     maxHeight: "600px",
     overflowY: "auto",
     border: "1px solid #e2e8f0",
-    borderRadius: "8px"
+    borderRadius: "8px",
+    position: "relative"
   },
   table: {
     width: "100%",
@@ -486,17 +722,172 @@ const styles = {
     color: "#4a5568",
     borderBottom: "2px solid #e2e8f0",
     position: "sticky",
-    top: "0"
+    top: "0",
+    zIndex: "10"
   },
   td: {
     padding: "12px 16px",
-    borderBottom: "1px solid #e2e8f0"
+    borderBottom: "1px solid #e2e8f0",
+    verticalAlign: "middle"
   },
+  // Separator styles
+  separatorRow: {
+    background: "linear-gradient(90deg, #fff5f5, #fff 50%, #fff5f5)"
+  },
+  separatorCell: {
+    padding: "12px 16px",
+    borderBottom: "3px solid #e53e3e",
+    borderTop: "3px solid #e53e3e"
+  },
+  separatorContent: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "column",
+    gap: "8px"
+  },
+  separatorLine: {
+    color: "#e53e3e",
+    fontFamily: "monospace",
+    fontSize: "14px",
+    letterSpacing: "2px",
+    fontWeight: "bold",
+    opacity: "0.8"
+  },
+  separatorInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+    justifyContent: "center"
+  },
+  nameChangeBadge: {
+    background: "#e53e3e",
+    color: "white",
+    padding: "4px 12px",
+    borderRadius: "16px",
+    fontSize: "12px",
+    fontWeight: "600",
+    whiteSpace: "nowrap"
+  },
+  nameDisplay: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap"
+  },
+  firstNameBadge: {
+    background: "#4299e1",
+    color: "white",
+    padding: "4px 10px",
+    borderRadius: "4px",
+    fontSize: "12px",
+    fontWeight: "500"
+  },
+  lastNameBadge: {
+    background: "#38a169",
+    color: "white",
+    padding: "4px 10px",
+    borderRadius: "4px",
+    fontSize: "12px",
+    fontWeight: "500"
+  },
+  // Regular row styles
   evenRow: {
     background: "#fafbff"
   },
   oddRow: {
     background: "#fff"
+  },
+  nameCell: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px"
+  },
+  fullName: {
+    fontWeight: "500",
+    color: "#2d3748",
+    fontSize: "14px"
+  },
+  nameParts: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "11px",
+    flexWrap: "wrap"
+  },
+  namePartLabel: {
+    color: "#718096",
+    fontSize: "10px",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px"
+  },
+  firstNamePart: {
+    color: "#2b6cb0",
+    backgroundColor: "#bee3f8",
+    padding: "2px 6px",
+    borderRadius: "3px",
+    fontWeight: "500"
+  },
+  lastNamePart: {
+    color: "#276749",
+    backgroundColor: "#c6f6d5",
+    padding: "2px 6px",
+    borderRadius: "3px",
+    fontWeight: "500"
+  },
+  // Legend
+  legend: {
+    marginTop: "20px",
+    padding: "16px",
+    backgroundColor: "#f8f9ff",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0"
+  },
+  legendTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#4a5568",
+    marginBottom: "12px",
+    textAlign: "center"
+  },
+  legendRules: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+  legendRule: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    fontSize: "12px",
+    color: "#718096"
+  },
+  legendLineSample: {
+    color: "#e53e3e",
+    fontFamily: "monospace",
+    fontSize: "12px",
+    fontWeight: "bold",
+    minWidth: "120px"
+  },
+  dataSample: {
+    color: "#4a5568",
+    fontFamily: "monospace",
+    fontSize: "12px",
+    backgroundColor: "#edf2f7",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    minWidth: "250px"
+  },
+  legendNote: {
+    marginTop: "8px",
+    padding: "8px",
+    backgroundColor: "#feebc8",
+    color: "#744210",
+    borderRadius: "6px",
+    fontSize: "13px",
+    fontWeight: "500",
+    textAlign: "center"
   },
   note: {
     fontSize: "12px",
@@ -506,3 +897,33 @@ const styles = {
     fontStyle: "italic"
   }
 };
+
+// Add CSS for toggle
+const toggleStyle = document.createElement('style');
+toggleStyle.textContent = `
+  input:checked + span {
+    background-color: #48bb78;
+  }
+  
+  input:checked + span:before {
+    transform: translateX(24px);
+  }
+  
+  span:before {
+    content: '';
+    position: absolute;
+    height: 22px;
+    width: 22px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+document.head.appendChild(toggleStyle);
