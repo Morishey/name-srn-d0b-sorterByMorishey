@@ -7,9 +7,17 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [results, setResults] = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [includeSeparators, setIncludeSeparators] = useState(true); // New state for toggle
+  const [includeSeparators, setIncludeSeparators] = useState(true);
 
   const CHUNK_SIZE = 10000;
+
+  // Function to extract first and last name from full name
+  const extractFirstAndLastName = useCallback((fullName) => {
+    const parts = fullName.trim().split(" ");
+    const firstName = parts[0] || "";
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : "";
+    return { firstName, lastName };
+  }, []);
 
   const handleFile = useCallback((e) => {
     const f = e.target.files[0];
@@ -83,8 +91,17 @@ export default function App() {
               const name = nameParts.join(" ").trim();
               if (!name) continue;
 
+              // Extract name parts for sorting
+              const { firstName, lastName } = extractFirstAndLastName(name);
+              
               seenKeys.add(key);
-              output.push({ name, dob, ssn });
+              output.push({ 
+                name, 
+                dob, 
+                ssn,
+                firstName,
+                lastName
+              });
             }
             resolve();
           });
@@ -102,15 +119,23 @@ export default function App() {
       const text = await file.text();
       const output = await processFileChunked(text);
 
+      // NEW SORTING LOGIC: Group same names together
       output.sort((a, b) => {
-        const nameCompare = a.name.localeCompare(b.name);
-        if (nameCompare !== 0) return nameCompare;
-
+        // First sort by first name
+        const firstNameCompare = a.firstName.localeCompare(b.firstName);
+        if (firstNameCompare !== 0) return firstNameCompare;
+        
+        // Then sort by last name
+        const lastNameCompare = a.lastName.localeCompare(b.lastName);
+        if (lastNameCompare !== 0) return lastNameCompare;
+        
+        // Then sort by date of birth
         const dateA = new Date(a.dob);
         const dateB = new Date(b.dob);
         if (dateA < dateB) return -1;
         if (dateA > dateB) return 1;
 
+        // Finally sort by SSN
         return a.ssn.localeCompare(b.ssn);
       });
 
@@ -123,52 +148,36 @@ export default function App() {
     } finally {
       setProcessing(false);
     }
-  }, [file]);
-
-  // Function to extract first and last name from full name
-  const extractFirstAndLastName = useCallback((fullName) => {
-    const parts = fullName.trim().split(" ");
-    const firstName = parts[0] || "";
-    const lastName = parts.length > 1 ? parts[parts.length - 1] : "";
-    return { firstName, lastName };
-  }, []);
+  }, [file, extractFirstAndLastName]);
 
   // Function to generate content WITH separators
   const generateContentWithSeparators = useCallback(() => {
     if (results.length === 0) return "";
     
     const contentLines = [];
-    let lastFirstName = "";
-    let lastLastName = "";
+    let lastFullName = ""; // Track last full name for grouping
     
     results.forEach((row, index) => {
       const { firstName, lastName } = extractFirstAndLastName(row.name);
+      const currentFullName = `${firstName} ${lastName}`;
       
-      // Add separator if either first OR last name changes
-      const isFirstNameChange = index > 0 && firstName !== lastFirstName;
-      const isLastNameChange = index > 0 && lastName !== lastLastName;
-      const shouldAddSeparator = includeSeparators && (isFirstNameChange || isLastNameChange);
+      // Add separator if this is a different person (different first AND last name)
+      const shouldAddSeparator = includeSeparators && index > 0 && currentFullName !== lastFullName;
       
       if (shouldAddSeparator) {
-        const changeTypes = [];
-        if (isFirstNameChange) changeTypes.push("first name");
-        if (isLastNameChange) changeTypes.push("last name");
-        
-        const changeType = changeTypes.join(" or ");
-        contentLines.push(`==================================== ${changeType} change: ${firstName} ${lastName}`);
+        contentLines.push(`==================================== ${currentFullName}`);
       }
       
       // Add the data row
       contentLines.push(`${row.name}|${row.dob}|${row.ssn}`);
       
-      lastFirstName = firstName;
-      lastLastName = lastName;
+      lastFullName = currentFullName;
     });
     
     return contentLines.join("\n");
   }, [results, extractFirstAndLastName, includeSeparators]);
 
-  // Function to generate content WITHOUT separators (original format)
+  // Function to generate content WITHOUT separators
   const generateContentWithoutSeparators = useCallback(() => {
     return results
       .map(r => `${r.name}|${r.dob}|${r.ssn}`)
@@ -178,7 +187,6 @@ export default function App() {
   const saveFile = useCallback(() => {
     if (results.length === 0) return;
 
-    // Use the appropriate content generator based on toggle
     const content = includeSeparators 
       ? generateContentWithSeparators()
       : generateContentWithoutSeparators();
@@ -206,28 +214,23 @@ export default function App() {
     
     const previewRows = results.slice(0, results.length > 1000 ? 1000 : results.length);
     const rowsWithSeparators = [];
-    let lastFirstName = "";
-    let lastLastName = "";
+    let lastFullName = "";
     
     previewRows.forEach((row, index) => {
       const { firstName, lastName } = extractFirstAndLastName(row.name);
+      const currentFullName = `${firstName} ${lastName}`;
       
-      const isFirstNameChange = index > 0 && firstName !== lastFirstName;
-      const isLastNameChange = index > 0 && lastName !== lastLastName;
-      const shouldAddSeparator = includeSeparators && (isFirstNameChange || isLastNameChange);
+      // Add separator if this is a different person (different first AND last name)
+      const shouldAddSeparator = includeSeparators && index > 0 && currentFullName !== lastFullName;
       
       if (shouldAddSeparator) {
-        const changeTypes = [];
-        if (isFirstNameChange) changeTypes.push("first name");
-        if (isLastNameChange) changeTypes.push("last name");
-        
         rowsWithSeparators.push({
           type: 'separator',
           id: `sep-${index}`,
           firstName: firstName,
           lastName: lastName,
           fullName: row.name,
-          changeType: changeTypes.join(" or "),
+          groupName: currentFullName,
           rowNumber: index
         });
       }
@@ -241,8 +244,7 @@ export default function App() {
         rowNumber: index + 1
       });
       
-      lastFirstName = firstName;
-      lastLastName = lastName;
+      lastFullName = currentFullName;
     });
     
     return rowsWithSeparators;
@@ -258,23 +260,33 @@ export default function App() {
     [getPreviewRowsWithSeparators]
   );
 
-  // Count unique first names and last names
-  const { uniqueFirstNames, uniqueLastNames } = useMemo(() => {
-    if (results.length === 0) return { uniqueFirstNames: 0, uniqueLastNames: 0 };
+  // Count unique name groups
+  const uniqueNameGroups = useMemo(() => {
+    if (results.length === 0) return 0;
     
-    const firstNames = new Set();
-    const lastNames = new Set();
-    
+    const groups = new Set();
     results.forEach(result => {
       const { firstName, lastName } = extractFirstAndLastName(result.name);
-      if (firstName) firstNames.add(firstName);
-      if (lastName) lastNames.add(lastName);
+      groups.add(`${firstName} ${lastName}`);
     });
     
-    return {
-      uniqueFirstNames: firstNames.size,
-      uniqueLastNames: lastNames.size
-    };
+    return groups.size;
+  }, [results, extractFirstAndLastName]);
+
+  // Count total records per name group
+  const recordsPerGroup = useMemo(() => {
+    if (results.length === 0) return [];
+    
+    const groups = {};
+    results.forEach(result => {
+      const { firstName, lastName } = extractFirstAndLastName(result.name);
+      const key = `${firstName} ${lastName}`;
+      groups[key] = (groups[key] || 0) + 1;
+    });
+    
+    return Object.entries(groups)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
   }, [results, extractFirstAndLastName]);
 
   return (
@@ -283,7 +295,7 @@ export default function App() {
         <header style={styles.header}>
           <h1 style={styles.title}>📄 TXT File Sorter</h1>
           <p style={styles.subtitle}>
-            Sorts by Name → Date of Birth → SSN
+            Groups by First & Last Name → Sorts by DOB → SSN
             <br />
             <small>Duplicates are removed based on SSN + DOB combination</small>
           </p>
@@ -341,7 +353,7 @@ export default function App() {
                   />
                   <span style={styles.toggleSlider}></span>
                   <span style={styles.toggleText}>
-                    Include separators in output
+                    Include separators between name groups
                   </span>
                 </label>
               </div>
@@ -386,14 +398,16 @@ export default function App() {
               </h3>
               <div style={styles.stats}>
                 <span style={styles.statBadge}>
-                  👤 {uniqueFirstNames} unique first names
-                </span>
-                <span style={styles.statBadge}>
-                  🏷️ {uniqueLastNames} unique last names
+                  👥 {uniqueNameGroups} name groups
                 </span>
                 <span style={styles.statBadge}>
                   📊 {results.length} total records
                 </span>
+                {recordsPerGroup.length > 0 && (
+                  <span style={styles.statBadge}>
+                    👑 {recordsPerGroup[0].name}: {recordsPerGroup[0].count} records
+                  </span>
+                )}
               </div>
             </div>
             
@@ -418,20 +432,14 @@ export default function App() {
                                 ====================================
                               </div>
                               <div style={styles.separatorInfo}>
-                                <div style={styles.nameChangeBadge}>
-                                  {item.changeType} change
+                                <div style={styles.nameGroupBadge}>
+                                  {item.groupName}
                                 </div>
-                                <div style={styles.nameDisplay}>
-                                  {item.firstName && (
-                                    <span style={styles.firstNameBadge}>
-                                      {item.firstName}
-                                    </span>
-                                  )}
-                                  {item.lastName && (
-                                    <span style={styles.lastNameBadge}>
-                                      {item.lastName}
-                                    </span>
-                                  )}
+                                <div style={styles.groupCount}>
+                                  {results.filter(r => {
+                                    const { firstName, lastName } = extractFirstAndLastName(r.name);
+                                    return `${firstName} ${lastName}` === item.groupName;
+                                  }).length} records in this group
                                 </div>
                               </div>
                             </div>
@@ -468,7 +476,7 @@ export default function App() {
               <div style={styles.legendRules}>
                 <div style={styles.legendRule}>
                   <div style={styles.legendLineSample}>= = = = = = =</div>
-                  <span>Separator line (added when first OR last name changes)</span>
+                  <span>Separator line (added between different name groups)</span>
                 </div>
                 <div style={styles.legendRule}>
                   <div style={styles.dataSample}>John Doe|1990-01-15|123-45-6789</div>
@@ -476,16 +484,40 @@ export default function App() {
                 </div>
                 <div style={styles.legendNote}>
                   {includeSeparators 
-                    ? "✓ Separators WILL be included in the saved file" 
+                    ? `✓ ${uniqueNameGroups} name groups will be separated in the saved file` 
                     : "✗ Separators will NOT be included in the saved file"}
                 </div>
               </div>
             </div>
             
+            {/* Top Name Groups */}
+            {recordsPerGroup.length > 5 && (
+              <div style={styles.topGroups}>
+                <h4>Top Name Groups:</h4>
+                <div style={styles.groupBars}>
+                  {recordsPerGroup.slice(0, 5).map((group, index) => (
+                    <div key={index} style={styles.groupBar}>
+                      <div style={styles.groupBarLabel}>{group.name}</div>
+                      <div style={styles.groupBarContainer}>
+                        <div 
+                          style={{
+                            ...styles.groupBarFill,
+                            width: `${(group.count / recordsPerGroup[0].count) * 100}%`
+                          }}
+                        >
+                          {group.count} records
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
             {results.length > 1000 && (
               <p style={styles.note}>
                 Showing first 1,000 rows. Full file will be saved with all {results.length.toLocaleString()} records.
-                {includeSeparators && " Includes separators between name groups."}
+                {includeSeparators && ` Includes separators between ${uniqueNameGroups} name groups.`}
               </p>
             )}
           </div>
@@ -761,36 +793,21 @@ const styles = {
     flexWrap: "wrap",
     justifyContent: "center"
   },
-  nameChangeBadge: {
+  nameGroupBadge: {
     background: "#e53e3e",
     color: "white",
-    padding: "4px 12px",
-    borderRadius: "16px",
-    fontSize: "12px",
+    padding: "6px 14px",
+    borderRadius: "20px",
+    fontSize: "14px",
     fontWeight: "600",
     whiteSpace: "nowrap"
   },
-  nameDisplay: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    flexWrap: "wrap"
-  },
-  firstNameBadge: {
-    background: "#4299e1",
-    color: "white",
-    padding: "4px 10px",
-    borderRadius: "4px",
+  groupCount: {
+    color: "#718096",
     fontSize: "12px",
-    fontWeight: "500"
-  },
-  lastNameBadge: {
-    background: "#38a169",
-    color: "white",
+    backgroundColor: "#fed7d7",
     padding: "4px 10px",
-    borderRadius: "4px",
-    fontSize: "12px",
-    fontWeight: "500"
+    borderRadius: "12px"
   },
   // Regular row styles
   evenRow: {
@@ -889,6 +906,54 @@ const styles = {
     fontWeight: "500",
     textAlign: "center"
   },
+  // Top groups visualization
+  topGroups: {
+    marginTop: "20px",
+    padding: "16px",
+    backgroundColor: "#f8f9ff",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0"
+  },
+  groupBars: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    marginTop: "12px"
+  },
+  groupBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px"
+  },
+  groupBarLabel: {
+    width: "150px",
+    fontSize: "12px",
+    color: "#4a5568",
+    fontWeight: "500",
+    textAlign: "right",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
+  },
+  groupBarContainer: {
+    flex: 1,
+    height: "24px",
+    backgroundColor: "#e2e8f0",
+    borderRadius: "12px",
+    overflow: "hidden"
+  },
+  groupBarFill: {
+    height: "100%",
+    backgroundColor: "#667eea",
+    color: "white",
+    fontSize: "11px",
+    fontWeight: "600",
+    display: "flex",
+    alignItems: "center",
+    paddingLeft: "10px",
+    transition: "width 0.5s ease",
+    minWidth: "60px"
+  },
   note: {
     fontSize: "12px",
     color: "#718096",
@@ -898,7 +963,7 @@ const styles = {
   }
 };
 
-// Add CSS for toggle
+// Add CSS for toggle and animations
 const toggleStyle = document.createElement('style');
 toggleStyle.textContent = `
   input:checked + span {
