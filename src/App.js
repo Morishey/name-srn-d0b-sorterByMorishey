@@ -1,6 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
-
-
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 
 export default function App() {
   const [file, setFile] = useState(null);
@@ -10,6 +8,19 @@ export default function App() {
   const [results, setResults] = useState([]);
   const [processing, setProcessing] = useState(false);
   const [includeSeparators, setIncludeSeparators] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile screen on mount and resize
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const CHUNK_SIZE = 10000;
 
@@ -136,7 +147,7 @@ export default function App() {
 
       setResults(output);
       setProgress(100);
-      setStatus(`✅ Processing complete - ${output.length.toLocaleString()} records sorted`);
+      setStatus(`✅ ${output.length.toLocaleString()} records sorted`);
     } catch (error) {
       setStatus("❌ Error processing file");
       console.error(error);
@@ -199,126 +210,63 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [results, fileName, includeSeparators, generateContentWithSeparators, generateContentWithoutSeparators]);
 
-  const getPreviewRowsWithSeparators = useCallback(() => {
+  // Responsive preview display
+  const previewRows = useMemo(() => {
     if (results.length === 0) return [];
-    
-    const previewRows = results.slice(0, results.length > 1000 ? 1000 : results.length);
-    const rowsWithSeparators = [];
-    let lastFullName = "";
-    
-    previewRows.forEach((row, index) => {
-      const { firstName, lastName } = extractFirstAndLastName(row.name);
-      const currentFullName = `${firstName} ${lastName}`;
-      
-      const shouldAddSeparator = includeSeparators && index > 0 && currentFullName !== lastFullName;
-      
-      if (shouldAddSeparator) {
-        rowsWithSeparators.push({
-          type: 'separator',
-          id: `sep-${index}`,
-          firstName: firstName,
-          lastName: lastName,
-          fullName: row.name,
-          groupName: currentFullName,
-          rowNumber: index
-        });
-      }
-      
-      rowsWithSeparators.push({
-        type: 'data',
-        ...row,
-        id: `row-${index}`,
-        firstName: firstName,
-        lastName: lastName,
-        rowNumber: index + 1
-      });
-      
-      lastFullName = currentFullName;
-    });
-    
-    return rowsWithSeparators;
-  }, [results, extractFirstAndLastName, includeSeparators]);
+    const maxRows = isMobile ? 10 : 20;
+    return results.slice(0, Math.min(maxRows, results.length));
+  }, [results, isMobile]);
 
   const fileSizeMB = useMemo(() => {
     return file ? (file.size / (1024 * 1024)).toFixed(2) : 0;
   }, [file]);
 
-  const previewRowsWithSeparators = useMemo(() => 
-    getPreviewRowsWithSeparators(), 
-    [getPreviewRowsWithSeparators]
-  );
-
-  const uniqueNameGroups = useMemo(() => {
-    if (results.length === 0) return 0;
-    
-    const groups = new Set();
-    results.forEach(result => {
-      const { firstName, lastName } = extractFirstAndLastName(result.name);
-      groups.add(`${firstName} ${lastName}`);
-    });
-    
-    return groups.size;
-  }, [results, extractFirstAndLastName]);
-
-  const recordsPerGroup = useMemo(() => {
-    if (results.length === 0) return [];
-    
-    const groups = {};
-    results.forEach(result => {
-      const { firstName, lastName } = extractFirstAndLastName(result.name);
-      const key = `${firstName} ${lastName}`;
-      groups[key] = (groups[key] || 0) + 1;
-    });
-    
-    return Object.entries(groups)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [results, extractFirstAndLastName]);
-
   return (
     <div style={styles.page}>
-      {/* Animated background elements */}
-      <div style={styles.backgroundElements}>
-        <div style={styles.bgCircle1}></div>
-        <div style={styles.bgCircle2}></div>
-        <div style={styles.bgCircle3}></div>
-      </div>
+      {/* Mobile overlay for better UX */}
+      {isMobile && (
+        <div style={styles.mobileOverlay}>
+          <div style={styles.mobileIcon}>📱</div>
+          <p style={styles.mobileText}>Mobile Mode Active</p>
+        </div>
+      )}
       
       <div style={styles.card}>
-        {/* Header with logo */}
+        {/* Responsive Header */}
         <header style={styles.header}>
           <div style={styles.logo}>
             <div style={styles.logoIcon}>📊</div>
             <div style={styles.logoText}>
               <h1 style={styles.title}>Mosort Pro</h1>
-              <p style={styles.subtitle}>Intelligent Text File Processor</p>
+              <p style={styles.subtitle}>
+                {isMobile ? "File Processor" : "Intelligent Text File Processor"}
+              </p>
             </div>
           </div>
-          <div style={styles.headerStats}>
-            <div style={styles.statCard}>
-              <div style={styles.statIcon}>⚡</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>Fast</div>
-                <div style={styles.statLabel}>Processing</div>
+          
+          {!isMobile && (
+            <div style={styles.headerStats}>
+              <div style={styles.statCard}>
+                <div style={styles.statIcon}>⚡</div>
+                <div style={styles.statContent}>
+                  <div style={styles.statValue}>Fast</div>
+                  <div style={styles.statLabel}>Processing</div>
+                </div>
               </div>
             </div>
-            <div style={styles.statCard}>
-              <div style={styles.statIcon}>🔒</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>Secure</div>
-                <div style={styles.statLabel}>Data Handling</div>
-              </div>
-            </div>
-          </div>
+          )}
         </header>
 
-        {/* Main content */}
+        {/* Main Content - Stack on mobile */}
         <div style={styles.mainContent}>
-          {/* Left panel - Upload & Controls */}
-          <div style={styles.leftPanel}>
+          
+          {/* File Upload Section */}
+          <div style={styles.section}>
             <div style={styles.uploadCard}>
               <div style={styles.uploadHeader}>
-                <h3 style={styles.cardTitle}>File Upload</h3>
+                <h3 style={styles.cardTitle}>
+                  {isMobile ? "📁 Upload File" : "File Upload"}
+                </h3>
                 <div style={styles.fileTypeBadge}>TXT</div>
               </div>
               
@@ -334,10 +282,15 @@ export default function App() {
                 <div style={styles.uploadArea}>
                   <div style={styles.uploadIconContainer}>
                     <div style={styles.uploadIcon}>📁</div>
-                    <div style={styles.uploadIconGlow}></div>
                   </div>
                   <p style={styles.uploadText}>
-                    {file ? fileName : "Drag & drop or click to browse"}
+                    {file ? (
+                      <span style={styles.fileNameActive}>{fileName}</span>
+                    ) : isMobile ? (
+                      "Tap to select file"
+                    ) : (
+                      "Drag & drop or click to browse"
+                    )}
                   </p>
                   {file && (
                     <div style={styles.fileInfo}>
@@ -346,21 +299,26 @@ export default function App() {
                         <span style={styles.fileInfoValue}>{fileSizeMB} MB</span>
                       </div>
                       <div style={styles.fileInfoRow}>
-                        <span style={styles.fileInfoLabel}>Type:</span>
-                        <span style={styles.fileInfoValue}>Text File</span>
+                        <span style={styles.fileInfoLabel}>Status:</span>
+                        <span style={styles.fileInfoValueReady}>Ready</span>
                       </div>
                     </div>
                   )}
-                  <div style={styles.uploadHint}>
-                    Supports .txt files with tab-separated values
-                  </div>
+                  {!file && (
+                    <div style={styles.uploadHint}>
+                      .txt files with tab-separated values
+                    </div>
+                  )}
                 </div>
               </label>
             </div>
 
+            {/* Processing Controls */}
             <div style={styles.controlsCard}>
               <div style={styles.controlsHeader}>
-                <h3 style={styles.cardTitle}>Processing Controls</h3>
+                <h3 style={styles.cardTitle}>
+                  {isMobile ? "⚙️ Controls" : "Processing Controls"}
+                </h3>
                 <div style={styles.statusIndicator}>
                   <div style={{
                     ...styles.statusDot,
@@ -378,7 +336,8 @@ export default function App() {
                 style={{
                   ...styles.button,
                   ...styles.primaryButton,
-                  ...(processing && styles.disabledButton)
+                  ...(processing && styles.disabledButton),
+                  ...(isMobile && styles.mobileButton)
                 }}
               >
                 <div style={styles.buttonContent}>
@@ -387,12 +346,12 @@ export default function App() {
                       <div style={styles.spinnerContainer}>
                         <div style={styles.spinner}></div>
                       </div>
-                      <span>Processing Data...</span>
+                      <span>{isMobile ? "Processing..." : "Processing Data..."}</span>
                     </>
                   ) : (
                     <>
                       <div style={styles.buttonIcon}>🚀</div>
-                      <span>Start Processing</span>
+                      <span>{isMobile ? "Process File" : "Start Processing"}</span>
                     </>
                   )}
                 </div>
@@ -401,7 +360,7 @@ export default function App() {
               {/* Progress Section */}
               <div style={styles.progressCard}>
                 <div style={styles.progressHeader}>
-                  <span style={styles.progressLabel}>Processing Progress</span>
+                  <span style={styles.progressLabel}>Progress</span>
                   <span style={styles.progressPercent}>{progress}%</span>
                 </div>
                 <div style={styles.progressContainer}>
@@ -409,29 +368,36 @@ export default function App() {
                     style={{ 
                       ...styles.progressBar,
                       width: `${progress}%`,
-                      background: `linear-gradient(90deg, #667eea, #9f7aea, #667eea)`,
-                      backgroundSize: '200% 100%',
-                      animation: progress === 100 ? 'none' : 'shimmer 2s infinite linear'
+                      background: progress === 100 ? 
+                        'linear-gradient(90deg, #10b981, #059669)' :
+                        'linear-gradient(90deg, #667eea, #9f7aea, #667eea)'
                     }} 
                   />
                 </div>
-                <p style={styles.statusMessage}>{status}</p>
+                <p style={styles.statusMessage}>
+                  {status || (isMobile ? "Upload file to start" : "Upload a file to begin")}
+                </p>
               </div>
 
-              {/* Settings */}
+              {/* Settings - Collapsible on mobile */}
               <div style={styles.settingsCard}>
                 <div style={styles.settingsHeader}>
-                  <h4 style={styles.settingsTitle}>Output Settings</h4>
-                  <div style={styles.settingsIcon}>⚙️</div>
+                  <h4 style={styles.settingsTitle}>
+                    {isMobile ? "⚙️ Settings" : "Output Settings"}
+                  </h4>
                 </div>
                 
                 <div style={styles.settingItem}>
                   <label style={styles.settingLabel}>
                     <div style={styles.settingInfo}>
-                      <span style={styles.settingName}>Group Separators</span>
-                      <span style={styles.settingDescription}>
-                        Add visual separators between name groups
+                      <span style={styles.settingName}>
+                        {isMobile ? "Add Separators" : "Group Separators"}
                       </span>
+                      {!isMobile && (
+                        <span style={styles.settingDescription}>
+                          Add visual separators between name groups
+                        </span>
+                      )}
                     </div>
                     <div style={styles.switchContainer}>
                       <input
@@ -446,23 +412,27 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Download Button */}
               {results.length > 0 && (
                 <button
                   onClick={saveFile}
                   style={{
                     ...styles.button,
-                    ...styles.successButton
+                    ...styles.successButton,
+                    ...(isMobile && styles.mobileButton)
                   }}
                 >
                   <div style={styles.buttonContent}>
                     <div style={styles.buttonIcon}>💾</div>
                     <div style={styles.saveButtonText}>
                       <div style={styles.saveButtonMain}>
-                        Download Sorted File
+                        {isMobile ? "Download" : "Download Sorted File"}
                       </div>
-                      <div style={styles.saveButtonSub}>
-                        {results.length.toLocaleString()} records • {includeSeparators ? 'With separators' : 'Without separators'}
-                      </div>
+                      {!isMobile && (
+                        <div style={styles.saveButtonSub}>
+                          {results.length.toLocaleString()} records
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -470,100 +440,58 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right panel - Preview & Results */}
-          <div style={styles.rightPanel}>
+          {/* Results Section */}
+          <div style={styles.section}>
             <div style={styles.resultsCard}>
               <div style={styles.resultsHeader}>
                 <div style={styles.resultsTitle}>
-                  <h3 style={styles.cardTitle}>Results Preview</h3>
-                  <div style={styles.resultsStats}>
-                    <div style={styles.resultsStat}>
-                      <div style={styles.resultsStatValue}>{uniqueNameGroups}</div>
-                      <div style={styles.resultsStatLabel}>Name Groups</div>
-                    </div>
-                    <div style={styles.resultsStat}>
-                      <div style={styles.resultsStatValue}>{results.length}</div>
-                      <div style={styles.resultsStatLabel}>Total Records</div>
-                    </div>
-                  </div>
-                </div>
-                
-                {recordsPerGroup.length > 0 && (
-                  <div style={styles.topGroups}>
-                    <div style={styles.topGroupsTitle}>Top Groups</div>
-                    <div style={styles.topGroupsList}>
-                      {recordsPerGroup.slice(0, 3).map((group, index) => (
-                        <div key={index} style={styles.topGroupItem}>
-                          <div style={styles.topGroupRank}>{index + 1}</div>
-                          <div style={styles.topGroupContent}>
-                            <div style={styles.topGroupName}>{group.name}</div>
-                            <div style={styles.topGroupCount}>{group.count} records</div>
+                  <h3 style={styles.cardTitle}>
+                    {results.length > 0 ? '📋 Results' : '📊 Preview'}
+                  </h3>
+                  {results.length > 0 && (
+                    <div style={styles.resultsStats}>
+                      <div style={styles.resultsStat}>
+                        <div style={styles.resultsStatValue}>{results.length}</div>
+                        <div style={styles.resultsStatLabel}>Records</div>
+                      </div>
+                      {!isMobile && (
+                        <div style={styles.resultsStat}>
+                          <div style={styles.resultsStatValue}>
+                            {new Set(results.map(r => `${r.firstName} ${r.lastName}`)).size}
                           </div>
-                          <div style={styles.topGroupBar}>
-                            <div 
-                              style={{
-                                ...styles.topGroupBarFill,
-                                width: `${(group.count / recordsPerGroup[0].count) * 100}%`
-                              }}
-                            ></div>
-                          </div>
+                          <div style={styles.resultsStatLabel}>Unique Names</div>
                         </div>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {results.length > 0 && (
-                <>
-                  <div style={styles.tableContainer}>
-                    <div style={styles.tableHeader}>
-                      <div style={styles.tableHeaderCell}>#</div>
-                      <div style={styles.tableHeaderCell}>Name</div>
-                      <div style={styles.tableHeaderCell}>Date of Birth</div>
-                      <div style={styles.tableHeaderCell}>SSN</div>
-                    </div>
-                    
-                    <div style={styles.tableBody}>
-                      {previewRowsWithSeparators.map((item) => {
-                        if (item.type === 'separator') {
-                          return (
-                            <div key={item.id} style={styles.separatorRow}>
-                              <div style={styles.separatorContent}>
-                                <div style={styles.separatorLine}>
-                                  <div style={styles.separatorDashes}>
-                                    {Array(20).fill('—').join('')}
-                                  </div>
-                                  <div style={styles.separatorLabel}>
-                                    <div style={styles.separatorGroup}>
-                                      {item.groupName}
-                                    </div>
-                                    <div style={styles.separatorCount}>
-                                      {results.filter(r => {
-                                        const { firstName, lastName } = extractFirstAndLastName(r.name);
-                                        return `${firstName} ${lastName}` === item.groupName;
-                                      }).length} records
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-                        
-                        return (
-                          <div key={item.id} style={styles.dataRow}>
-                            <div style={styles.dataCell}>{item.rowNumber}</div>
+              {/* Results Display - Responsive table */}
+              {results.length > 0 ? (
+                <div style={styles.tableContainer}>
+                  {!isMobile ? (
+                    // Desktop Table
+                    <>
+                      <div style={styles.tableHeader}>
+                        <div style={styles.tableHeaderCell}>#</div>
+                        <div style={styles.tableHeaderCell}>Name</div>
+                        <div style={styles.tableHeaderCell}>DOB</div>
+                        <div style={styles.tableHeaderCell}>SSN</div>
+                      </div>
+                      
+                      <div style={styles.tableBody}>
+                        {previewRows.map((item, index) => (
+                          <div key={index} style={styles.dataRow}>
+                            <div style={styles.dataCell}>{index + 1}</div>
                             <div style={styles.dataCell}>
                               <div style={styles.nameCell}>
                                 <div style={styles.namePrimary}>{item.name}</div>
                                 <div style={styles.nameDetails}>
                                   <span style={styles.nameDetail}>
-                                    <span style={styles.nameDetailLabel}>First:</span>
                                     <span style={styles.nameDetailValue}>{item.firstName}</span>
                                   </span>
                                   <span style={styles.nameDetail}>
-                                    <span style={styles.nameDetailLabel}>Last:</span>
                                     <span style={styles.nameDetailValue}>{item.lastName}</span>
                                   </span>
                                 </div>
@@ -580,42 +508,68 @@ export default function App() {
                               </div>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {results.length > 1000 && (
-                    <div style={styles.previewNote}>
-                      <div style={styles.previewNoteIcon}>ℹ️</div>
-                      <div style={styles.previewNoteText}>
-                        Showing first 1,000 of {results.length.toLocaleString()} records
+                        ))}
                       </div>
+                    </>
+                  ) : (
+                    // Mobile Card List
+                    <div style={styles.mobileList}>
+                      {previewRows.map((item, index) => (
+                        <div key={index} style={styles.mobileCard}>
+                          <div style={styles.mobileCardHeader}>
+                            <div style={styles.mobileCardNumber}>{index + 1}</div>
+                            <div style={styles.mobileCardTitle}>{item.name}</div>
+                          </div>
+                          <div style={styles.mobileCardDetails}>
+                            <div style={styles.mobileDetail}>
+                              <span style={styles.mobileDetailLabel}>DOB:</span>
+                              <span style={styles.mobileDetailValue}>{item.dob}</span>
+                            </div>
+                            <div style={styles.mobileDetail}>
+                              <span style={styles.mobileDetailLabel}>SSN:</span>
+                              <span style={styles.mobileDetailValue}>{item.ssn}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
-                </>
+                  
+                  {results.length > previewRows.length && (
+                    <div style={styles.tableFooter}>
+                      Showing {previewRows.length} of {results.length.toLocaleString()} records
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyStateIcon}>📊</div>
+                  <h4 style={styles.emptyStateTitle}>No Data Processed</h4>
+                  <p style={styles.emptyStateText}>
+                    {isMobile ? 
+                      "Upload and process a file to see results" : 
+                      "Upload a .txt file and process it to see results here"
+                    }
+                  </p>
+                </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Footer */}
-        <footer style={styles.footer}>
-          <div style={styles.footerContent}>
-            <div style={styles.footerText}>
-              DataSort Pro v1.0 • Secure file processing
-            </div>
-            <div style={styles.footerStats}>
+        {/* Mobile Footer */}
+        {isMobile && (
+          <footer style={styles.mobileFooter}>
+            <div style={styles.mobileFooterContent}>
+              <span style={styles.mobileFooterText}>Mosort Pro • Mobile</span>
               {processing && (
-                <div style={styles.processingStats}>
-                  <span style={styles.processingText}>
-                    Processing: {progress}%
-                  </span>
+                <div style={styles.mobileProgress}>
+                  <span style={styles.mobileProgressText}>Processing: {progress}%</span>
                 </div>
               )}
             </div>
-          </div>
-        </footer>
+          </footer>
+        )}
       </div>
     </div>
   );
@@ -624,142 +578,159 @@ export default function App() {
 const styles = {
   page: {
     minHeight: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    padding: "20px",
+    padding: "16px",
     position: "relative",
-    overflow: "hidden"
+    '@media (max-width: 768px)': {
+      padding: "12px"
+    }
   },
   
-  backgroundElements: {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
-    top: 0,
-    left: 0,
-    zIndex: 0
+  // Mobile Overlay Indicator
+  mobileOverlay: {
+    position: 'fixed',
+    top: '10px',
+    right: '10px',
+    background: 'rgba(102, 126, 234, 0.2)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: '20px',
+    padding: '8px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    zIndex: 1000,
+    border: '1px solid rgba(102, 126, 234, 0.3)'
   },
   
-  bgCircle1: {
-    position: "absolute",
-    width: "600px",
-    height: "600px",
-    borderRadius: "50%",
-    background: "radial-gradient(circle, rgba(102, 126, 234, 0.1) 0%, rgba(102, 126, 234, 0) 70%)",
-    top: "-200px",
-    right: "-200px",
-    filter: "blur(40px)"
+  mobileIcon: {
+    fontSize: '20px'
   },
   
-  bgCircle2: {
-    position: "absolute",
-    width: "500px",
-    height: "500px",
-    borderRadius: "50%",
-    background: "radial-gradient(circle, rgba(159, 122, 234, 0.08) 0%, rgba(159, 122, 234, 0) 70%)",
-    bottom: "-150px",
-    left: "-150px",
-    filter: "blur(40px)"
+  mobileText: {
+    fontSize: '12px',
+    color: '#e2e8f0',
+    fontWeight: '500'
   },
   
-  bgCircle3: {
-    position: "absolute",
-    width: "300px",
-    height: "300px",
-    borderRadius: "50%",
-    background: "radial-gradient(circle, rgba(56, 189, 248, 0.05) 0%, rgba(56, 189, 248, 0) 70%)",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    filter: "blur(30px)"
-  },
-  
+  // Main Card
   card: {
-    background: "rgba(30, 41, 59, 0.8)",
-    backdropFilter: "blur(20px)",
-    borderRadius: "24px",
-    padding: "32px",
+    background: "rgba(30, 41, 59, 0.9)",
+    backdropFilter: "blur(10px)",
+    borderRadius: "20px",
+    padding: "24px",
     width: "100%",
-    maxWidth: "1600px",
-    boxShadow: `
-      0 20px 80px rgba(0, 0, 0, 0.4),
-      0 8px 32px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1)
-    `,
+    maxWidth: "1400px",
+    margin: "0 auto",
+    boxShadow: "0 10px 40px rgba(0, 0, 0, 0.3)",
     border: "1px solid rgba(255, 255, 255, 0.1)",
-    zIndex: 1,
-    position: "relative"
+    '@media (max-width: 768px)': {
+      padding: "16px",
+      borderRadius: "16px"
+    }
   },
   
+  // Header
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "40px",
-    paddingBottom: "24px",
-    borderBottom: "1px solid rgba(255, 255, 255, 0.1)"
+    marginBottom: "32px",
+    paddingBottom: "20px",
+    borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+    '@media (max-width: 768px)': {
+      flexDirection: 'column',
+      gap: '16px',
+      alignItems: 'flex-start',
+      marginBottom: '24px',
+      paddingBottom: '16px'
+    }
   },
   
   logo: {
     display: "flex",
     alignItems: "center",
-    gap: "16px"
+    gap: "16px",
+    '@media (max-width: 768px)': {
+      gap: '12px'
+    }
   },
   
   logoIcon: {
-    fontSize: "48px",
+    fontSize: "40px",
     background: "linear-gradient(135deg, #667eea, #9f7aea)",
-    borderRadius: "16px",
-    width: "64px",
-    height: "64px",
+    borderRadius: "12px",
+    width: "52px",
+    height: "52px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0 8px 32px rgba(102, 126, 234, 0.3)"
+    boxShadow: "0 4px 20px rgba(102, 126, 234, 0.3)",
+    '@media (max-width: 768px)': {
+      width: '44px',
+      height: '44px',
+      fontSize: '32px'
+    }
   },
   
   logoText: {
     display: "flex",
-    flexDirection: "column"
+    flexDirection: "column",
+    '@media (max-width: 768px)': {
+      flex: 1
+    }
   },
   
   title: {
-    fontSize: "32px",
+    fontSize: "28px",
     fontWeight: "800",
     background: "linear-gradient(135deg, #ffffff, #cbd5e1)",
     WebkitBackgroundClip: "text",
     WebkitTextFillColor: "transparent",
     margin: "0 0 4px 0",
-    letterSpacing: "-0.5px"
+    letterSpacing: "-0.5px",
+    '@media (max-width: 768px)': {
+      fontSize: '24px'
+    }
   },
   
   subtitle: {
     fontSize: "14px",
     color: "#94a3b8",
     margin: 0,
-    fontWeight: "500"
+    fontWeight: "500",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
   },
   
   headerStats: {
     display: "flex",
-    gap: "16px"
+    gap: "12px",
+    '@media (max-width: 768px)': {
+      width: '100%',
+      justifyContent: 'center'
+    }
   },
   
   statCard: {
     display: "flex",
     alignItems: "center",
-    gap: "12px",
+    gap: "10px",
     background: "rgba(30, 41, 59, 0.6)",
-    padding: "12px 20px",
-    borderRadius: "12px",
-    border: "1px solid rgba(255, 255, 255, 0.05)"
+    padding: "10px 16px",
+    borderRadius: "10px",
+    border: "1px solid rgba(255, 255, 255, 0.05)",
+    '@media (max-width: 768px)': {
+      padding: '8px 12px'
+    }
   },
   
   statIcon: {
-    fontSize: "20px"
+    fontSize: "18px",
+    '@media (max-width: 768px)': {
+      fontSize: '16px'
+    }
   },
   
   statContent: {
@@ -770,60 +741,74 @@ const styles = {
   statValue: {
     fontSize: "14px",
     fontWeight: "700",
-    color: "#ffffff"
+    color: "#ffffff",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
   },
   
   statLabel: {
-    fontSize: "12px",
-    color: "#94a3b8"
+    fontSize: "11px",
+    color: "#94a3b8",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
   },
   
+  // Main Content Layout
   mainContent: {
-    display: "grid",
-    gridTemplateColumns: "1fr 2fr",
-    gap: "32px",
-    marginBottom: "32px"
-  },
-  
-  leftPanel: {
     display: "flex",
     flexDirection: "column",
-    gap: "24px"
+    gap: "24px",
+    marginBottom: "32px",
+    '@media (min-width: 769px)': {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1.5fr',
+      gap: '32px'
+    }
   },
   
-  rightPanel: {
+  section: {
     display: "flex",
-    flexDirection: "column"
+    flexDirection: "column",
+    gap: "20px"
   },
   
+  // Upload Card
   uploadCard: {
     background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "20px",
-    padding: "24px",
+    borderRadius: "16px",
+    padding: "20px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
-    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2)"
+    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
+    '@media (max-width: 768px)': {
+      padding: '16px'
+    }
   },
   
   uploadHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "20px"
+    marginBottom: "16px"
   },
   
   cardTitle: {
-    fontSize: "18px",
+    fontSize: "16px",
     fontWeight: "700",
     color: "#ffffff",
-    margin: 0
+    margin: 0,
+    '@media (max-width: 768px)': {
+      fontSize: '15px'
+    }
   },
   
   fileTypeBadge: {
     background: "rgba(102, 126, 234, 0.2)",
     color: "#667eea",
-    padding: "4px 12px",
-    borderRadius: "20px",
-    fontSize: "12px",
+    padding: "4px 10px",
+    borderRadius: "16px",
+    fontSize: "11px",
     fontWeight: "600",
     border: "1px solid rgba(102, 126, 234, 0.3)"
   },
@@ -839,85 +824,107 @@ const styles = {
   
   uploadArea: {
     border: "2px dashed rgba(102, 126, 234, 0.3)",
-    borderRadius: "16px",
-    padding: "40px 24px",
+    borderRadius: "12px",
+    padding: "32px 20px",
     background: "rgba(15, 23, 42, 0.4)",
     transition: "all 0.3s ease",
     textAlign: "center",
-    ":hover": {
+    ':hover': {
       borderColor: "#667eea",
       background: "rgba(15, 23, 42, 0.6)"
+    },
+    '@media (max-width: 768px)': {
+      padding: '24px 16px'
     }
   },
   
   uploadIconContainer: {
-    position: "relative",
-    marginBottom: "16px"
+    marginBottom: "12px"
   },
   
   uploadIcon: {
-    fontSize: "48px",
+    fontSize: "40px",
     color: "#667eea",
-    position: "relative",
-    zIndex: 1
-  },
-  
-  uploadIconGlow: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    width: "60px",
-    height: "60px",
-    background: "radial-gradient(circle, rgba(102, 126, 234, 0.3) 0%, rgba(102, 126, 234, 0) 70%)",
-    borderRadius: "50%",
-    filter: "blur(8px)"
+    '@media (max-width: 768px)': {
+      fontSize: '36px'
+    }
   },
   
   uploadText: {
-    fontSize: "16px",
+    fontSize: "15px",
     color: "#e2e8f0",
-    margin: "0 0 16px 0",
-    fontWeight: "500"
+    margin: "0 0 12px 0",
+    fontWeight: "500",
+    '@media (max-width: 768px)': {
+      fontSize: '14px'
+    }
+  },
+  
+  fileNameActive: {
+    color: '#667eea',
+    fontWeight: '600',
+    wordBreak: 'break-word'
   },
   
   fileInfo: {
     background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "12px",
+    borderRadius: "10px",
     padding: "12px",
-    marginBottom: "16px"
+    marginBottom: "12px",
+    '@media (max-width: 768px)': {
+      padding: '10px'
+    }
   },
   
   fileInfoRow: {
     display: "flex",
     justifyContent: "space-between",
-    marginBottom: "8px",
-    ":last-child": {
+    marginBottom: "6px",
+    ':last-child': {
       marginBottom: 0
     }
   },
   
   fileInfoLabel: {
-    fontSize: "13px",
-    color: "#94a3b8"
+    fontSize: "12px",
+    color: "#94a3b8",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
   },
   
   fileInfoValue: {
-    fontSize: "13px",
+    fontSize: "12px",
     color: "#ffffff",
-    fontWeight: "500"
+    fontWeight: "500",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
+  },
+  
+  fileInfoValueReady: {
+    fontSize: "12px",
+    color: "#48bb78",
+    fontWeight: "600",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
   },
   
   uploadHint: {
-    fontSize: "12px",
+    fontSize: "11px",
     color: "#64748b",
-    fontStyle: "italic"
+    fontStyle: "italic",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
   },
   
+  // Controls Card
   controlsCard: {
     display: "flex",
     flexDirection: "column",
-    gap: "20px"
+    gap: "16px"
   },
   
   controlsHeader: {
@@ -941,62 +948,87 @@ const styles = {
   },
   
   statusText: {
-    fontSize: "13px",
-    color: "#94a3b8"
+    fontSize: "12px",
+    color: "#94a3b8",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
   },
   
+  // Buttons
   button: {
-    padding: "18px 24px",
-    borderRadius: "14px",
+    padding: "16px 20px",
+    borderRadius: "12px",
     border: "none",
-    fontSize: "16px",
+    fontSize: "15px",
     fontWeight: "600",
     cursor: "pointer",
     transition: "all 0.3s ease",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: "12px",
-    width: "100%"
+    gap: "10px",
+    width: "100%",
+    '@media (max-width: 768px)': {
+      padding: '14px 16px',
+      fontSize: '14px'
+    }
+  },
+  
+  mobileButton: {
+    padding: '14px',
+    fontSize: '14px',
+    gap: '8px'
   },
   
   buttonContent: {
     display: "flex",
     alignItems: "center",
-    gap: "12px"
+    gap: "10px",
+    '@media (max-width: 768px)': {
+      gap: '8px'
+    }
   },
   
   primaryButton: {
     background: "linear-gradient(135deg, #667eea 0%, #9f7aea 100%)",
     color: "white",
-    boxShadow: "0 8px 32px rgba(102, 126, 234, 0.4)",
-    ":hover": {
+    boxShadow: "0 4px 20px rgba(102, 126, 234, 0.4)",
+    ':hover': {
       transform: "translateY(-2px)",
-      boxShadow: "0 12px 40px rgba(102, 126, 234, 0.5)"
+      boxShadow: "0 8px 30px rgba(102, 126, 234, 0.5)"
+    },
+    '@media (max-width: 768px)': {
+      ':active': {
+        transform: "scale(0.98)"
+      }
     }
   },
   
   successButton: {
     background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
     color: "white",
-    boxShadow: "0 8px 32px rgba(16, 185, 129, 0.4)",
-    ":hover": {
+    boxShadow: "0 4px 20px rgba(16, 185, 129, 0.4)",
+    ':hover': {
       transform: "translateY(-2px)",
-      boxShadow: "0 12px 40px rgba(16, 185, 129, 0.5)"
+      boxShadow: "0 8px 30px rgba(16, 185, 129, 0.5)"
     }
   },
   
   disabledButton: {
     opacity: 0.6,
     cursor: "not-allowed",
-    ":hover": {
+    ':hover': {
       transform: "none",
-      boxShadow: "0 8px 32px rgba(102, 126, 234, 0.4)"
+      boxShadow: "0 4px 20px rgba(102, 126, 234, 0.4)"
     }
   },
   
   buttonIcon: {
-    fontSize: "20px"
+    fontSize: "18px",
+    '@media (max-width: 768px)': {
+      fontSize: '16px'
+    }
   },
   
   spinnerContainer: {
@@ -1006,35 +1038,47 @@ const styles = {
   },
   
   spinner: {
-    width: "20px",
-    height: "20px",
+    width: "18px",
+    height: "18px",
     border: "2px solid rgba(255,255,255,0.3)",
     borderTop: "2px solid white",
     borderRadius: "50%",
-    animation: "spin 1s linear infinite"
+    animation: "spin 1s linear infinite",
+    '@media (max-width: 768px)': {
+      width: '16px',
+      height: '16px'
+    }
   },
   
   saveButtonText: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "flex-start"
+    alignItems: "flex-start",
+    textAlign: "left"
   },
   
   saveButtonMain: {
-    fontSize: "16px",
-    fontWeight: "600"
+    fontSize: "15px",
+    fontWeight: "600",
+    '@media (max-width: 768px)': {
+      fontSize: '14px'
+    }
   },
   
   saveButtonSub: {
-    fontSize: "12px",
+    fontSize: "11px",
     opacity: 0.9,
-    fontWeight: "400"
+    fontWeight: "400",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
   },
   
+  // Progress Card
   progressCard: {
     background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "16px",
-    padding: "20px",
+    borderRadius: "12px",
+    padding: "16px",
     border: "1px solid rgba(255, 255, 255, 0.05)"
   },
   
@@ -1042,48 +1086,59 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "12px"
+    marginBottom: "10px"
   },
   
   progressLabel: {
-    fontSize: "14px",
+    fontSize: "13px",
     color: "#e2e8f0",
-    fontWeight: "500"
+    fontWeight: "500",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
   },
   
   progressPercent: {
-    fontSize: "18px",
+    fontSize: "16px",
     fontWeight: "700",
     background: "linear-gradient(135deg, #667eea, #9f7aea)",
     WebkitBackgroundClip: "text",
-    WebkitTextFillColor: "transparent"
+    WebkitTextFillColor: "transparent",
+    '@media (max-width: 768px)': {
+      fontSize: '15px'
+    }
   },
   
   progressContainer: {
-    height: "8px",
+    height: "6px",
     background: "rgba(255, 255, 255, 0.05)",
-    borderRadius: "4px",
+    borderRadius: "3px",
     overflow: "hidden",
-    marginBottom: "12px"
+    marginBottom: "10px"
   },
   
   progressBar: {
     height: "100%",
-    borderRadius: "4px",
+    borderRadius: "3px",
     transition: "width 0.3s ease"
   },
   
   statusMessage: {
-    fontSize: "13px",
+    fontSize: "12px",
     color: "#94a3b8",
     margin: 0,
-    textAlign: "center"
+    textAlign: "center",
+    minHeight: "18px",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
   },
   
+  // Settings Card
   settingsCard: {
     background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "16px",
-    padding: "20px",
+    borderRadius: "12px",
+    padding: "16px",
     border: "1px solid rgba(255, 255, 255, 0.05)"
   },
   
@@ -1091,24 +1146,22 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "20px"
+    marginBottom: "16px"
   },
   
   settingsTitle: {
-    fontSize: "16px",
+    fontSize: "14px",
     fontWeight: "600",
     color: "#ffffff",
-    margin: 0
-  },
-  
-  settingsIcon: {
-    fontSize: "20px",
-    opacity: 0.7
+    margin: 0,
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
   },
   
   settingItem: {
-    marginBottom: "16px",
-    ":last-child": {
+    marginBottom: "12px",
+    ':last-child': {
       marginBottom: 0
     }
   },
@@ -1127,21 +1180,31 @@ const styles = {
   },
   
   settingName: {
-    fontSize: "14px",
+    fontSize: "13px",
     color: "#e2e8f0",
     fontWeight: "500",
-    marginBottom: "4px"
+    marginBottom: "4px",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
   },
   
   settingDescription: {
-    fontSize: "12px",
-    color: "#94a3b8"
+    fontSize: "11px",
+    color: "#94a3b8",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
   },
   
   switchContainer: {
     position: "relative",
-    width: "52px",
-    height: "28px"
+    width: "48px",
+    height: "26px",
+    '@media (max-width: 768px)': {
+      width: '44px',
+      height: '24px'
+    }
   },
   
   switchInput: {
@@ -1161,227 +1224,152 @@ const styles = {
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: "34px",
     transition: ".4s",
-    ":before": {
+    ':before': {
       position: "absolute",
       content: '""',
-      height: "20px",
-      width: "20px",
+      height: "18px",
+      width: "18px",
       left: "4px",
       bottom: "4px",
       backgroundColor: "white",
       borderRadius: "50%",
       transition: ".4s",
-      boxShadow: "0 2px 8px rgba(0, 0, 0, 0.2)"
+      boxShadow: "0 2px 6px rgba(0, 0, 0, 0.2)"
+    },
+    '@media (max-width: 768px)': {
+      ':before': {
+        height: '16px',
+        width: '16px'
+      }
     }
   },
   
+  // Results Card
   resultsCard: {
     background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "20px",
-    padding: "24px",
+    borderRadius: "16px",
+    padding: "20px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
-    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2)",
+    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
     height: "100%",
     display: "flex",
-    flexDirection: "column"
+    flexDirection: "column",
+    minHeight: "400px",
+    '@media (max-width: 768px)': {
+      padding: '16px',
+      minHeight: '300px'
+    }
   },
   
   resultsHeader: {
-    marginBottom: "24px"
+    marginBottom: "20px"
   },
   
   resultsTitle: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "20px"
+    marginBottom: "16px",
+    '@media (max-width: 768px)': {
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      gap: '12px'
+    }
   },
   
   resultsStats: {
     display: "flex",
-    gap: "16px"
+    gap: "16px",
+    '@media (max-width: 768px)': {
+      width: '100%',
+      justifyContent: 'space-between'
+    }
   },
   
   resultsStat: {
-    textAlign: "center"
+    textAlign: "center",
+    '@media (max-width: 768px)': {
+      textAlign: 'left'
+    }
   },
   
   resultsStatValue: {
-    fontSize: "24px",
+    fontSize: "22px",
     fontWeight: "800",
     background: "linear-gradient(135deg, #667eea, #9f7aea)",
     WebkitBackgroundClip: "text",
     WebkitTextFillColor: "transparent",
-    lineHeight: 1
+    lineHeight: 1,
+    '@media (max-width: 768px)': {
+      fontSize: '20px'
+    }
   },
   
   resultsStatLabel: {
-    fontSize: "12px",
-    color: "#94a3b8",
-    marginTop: "4px"
-  },
-  
-  topGroups: {
-    background: "rgba(15, 23, 42, 0.4)",
-    borderRadius: "12px",
-    padding: "16px"
-  },
-  
-  topGroupsTitle: {
-    fontSize: "14px",
-    fontWeight: "600",
-    color: "#e2e8f0",
-    marginBottom: "12px"
-  },
-  
-  topGroupsList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px"
-  },
-  
-  topGroupItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px"
-  },
-  
-  topGroupRank: {
-    width: "24px",
-    height: "24px",
-    background: "linear-gradient(135deg, #667eea, #9f7aea)",
-    borderRadius: "6px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "12px",
-    fontWeight: "700",
-    color: "white"
-  },
-  
-  topGroupContent: {
-    flex: 1,
-    minWidth: 0
-  },
-  
-  topGroupName: {
-    fontSize: "13px",
-    color: "#ffffff",
-    fontWeight: "500",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap"
-  },
-  
-  topGroupCount: {
     fontSize: "11px",
     color: "#94a3b8",
-    marginTop: "2px"
+    marginTop: "4px",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
   },
   
-  topGroupBar: {
-    flex: 2,
-    height: "6px",
-    background: "rgba(255, 255, 255, 0.05)",
-    borderRadius: "3px",
-    overflow: "hidden"
-  },
-  
-  topGroupBarFill: {
-    height: "100%",
-    background: "linear-gradient(90deg, #667eea, #9f7aea)",
-    borderRadius: "3px",
-    transition: "width 0.5s ease"
-  },
-  
+  // Table Container
   tableContainer: {
     flex: 1,
     overflow: "hidden",
-    borderRadius: "12px",
+    borderRadius: "10px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
-    background: "rgba(15, 23, 42, 0.4)"
+    background: "rgba(15, 23, 42, 0.4)",
+    display: "flex",
+    flexDirection: "column"
   },
   
   tableHeader: {
     display: "grid",
-    gridTemplateColumns: "80px 1fr 120px 140px",
+    gridTemplateColumns: "60px 1fr 100px 120px",
     background: "rgba(30, 41, 59, 0.8)",
-    padding: "16px 20px",
+    padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
     position: "sticky",
     top: 0,
-    zIndex: 10
+    zIndex: 10,
+    '@media (max-width: 1024px)': {
+      gridTemplateColumns: '50px 1fr 90px 110px'
+    }
   },
   
   tableHeaderCell: {
-    fontSize: "13px",
+    fontSize: "12px",
     fontWeight: "600",
     color: "#94a3b8",
     textTransform: "uppercase",
-    letterSpacing: "0.5px"
+    letterSpacing: "0.5px",
+    '@media (max-width: 1024px)': {
+      fontSize: '11px'
+    }
   },
   
   tableBody: {
-    maxHeight: "500px",
-    overflowY: "auto"
-  },
-  
-  separatorRow: {
-    background: "rgba(102, 126, 234, 0.05)",
-    borderTop: "1px solid rgba(102, 126, 234, 0.2)",
-    borderBottom: "1px solid rgba(102, 126, 234, 0.2)"
-  },
-  
-  separatorContent: {
-    padding: "12px 20px"
-  },
-  
-  separatorLine: {
-    display: "flex",
-    alignItems: "center",
-    gap: "16px"
-  },
-  
-  separatorDashes: {
-    color: "#667eea",
-    fontSize: "12px",
-    opacity: 0.5,
-    flexShrink: 0
-  },
-  
-  separatorLabel: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px"
-  },
-  
-  separatorGroup: {
-    fontSize: "14px",
-    fontWeight: "600",
-    color: "#667eea",
-    background: "rgba(102, 126, 234, 0.1)",
-    padding: "4px 12px",
-    borderRadius: "12px"
-  },
-  
-  separatorCount: {
-    fontSize: "12px",
-    color: "#94a3b8",
-    background: "rgba(255, 255, 255, 0.05)",
-    padding: "2px 8px",
-    borderRadius: "8px"
+    flex: 1,
+    overflowY: "auto",
+    maxHeight: "400px"
   },
   
   dataRow: {
     display: "grid",
-    gridTemplateColumns: "80px 1fr 120px 140px",
-    padding: "16px 20px",
+    gridTemplateColumns: "60px 1fr 100px 120px",
+    padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.03)",
-    ":hover": {
+    ':hover': {
       background: "rgba(255, 255, 255, 0.02)"
     },
-    ":nth-child(odd)": {
+    ':nth-child(odd)': {
       background: "rgba(255, 255, 255, 0.01)"
+    },
+    '@media (max-width: 1024px)': {
+      gridTemplateColumns: '50px 1fr 90px 110px',
+      padding: '10px 12px'
     }
   },
   
@@ -1393,29 +1381,30 @@ const styles = {
   nameCell: {
     display: "flex",
     flexDirection: "column",
-    gap: "6px"
+    gap: "4px"
   },
   
   namePrimary: {
-    fontSize: "14px",
+    fontSize: "13px",
     color: "#ffffff",
-    fontWeight: "500"
+    fontWeight: "500",
+    lineHeight: "1.3",
+    wordBreak: "break-word",
+    '@media (max-width: 1024px)': {
+      fontSize: '12px'
+    }
   },
   
   nameDetails: {
     display: "flex",
-    gap: "12px",
-    fontSize: "11px"
+    gap: "8px",
+    fontSize: "10px"
   },
   
   nameDetail: {
     display: "flex",
     alignItems: "center",
-    gap: "4px"
-  },
-  
-  nameDetailLabel: {
-    color: "#64748b"
+    gap: "2px"
   },
   
   nameDetailValue: {
@@ -1423,80 +1412,183 @@ const styles = {
     fontWeight: "500",
     background: "rgba(255, 255, 255, 0.05)",
     padding: "2px 6px",
-    borderRadius: "4px"
+    borderRadius: "4px",
+    fontSize: "10px"
   },
   
   dobCell: {
-    fontSize: "13px",
+    fontSize: "12px",
     color: "#cbd5e1",
-    fontWeight: "500"
+    fontWeight: "500",
+    '@media (max-width: 1024px)': {
+      fontSize: '11px'
+    }
   },
   
   ssnCell: {
-    fontSize: "13px",
+    fontSize: "12px",
     color: "#cbd5e1",
     fontWeight: "500",
-    fontFamily: "monospace"
+    fontFamily: "monospace",
+    '@media (max-width: 1024px)': {
+      fontSize: '11px'
+    }
   },
   
-  previewNote: {
+  // Mobile List View
+  mobileList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "8px"
+  },
+  
+  mobileCard: {
+    background: "rgba(30, 41, 59, 0.6)",
+    borderRadius: "10px",
+    padding: "12px",
+    marginBottom: "8px",
+    border: "1px solid rgba(255, 255, 255, 0.05)"
+  },
+  
+  mobileCardHeader: {
     display: "flex",
     alignItems: "center",
+    gap: "12px",
+    marginBottom: "8px"
+  },
+  
+  mobileCardNumber: {
+    background: "linear-gradient(135deg, #667eea, #9f7aea)",
+    color: "white",
+    width: "28px",
+    height: "28px",
+    borderRadius: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "12px",
+    fontWeight: "700"
+  },
+  
+  mobileCardTitle: {
+    fontSize: "14px",
+    color: "#ffffff",
+    fontWeight: "600",
+    flex: 1,
+    wordBreak: "break-word"
+  },
+  
+  mobileCardDetails: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px"
+  },
+  
+  mobileDetail: {
+    display: "flex",
     gap: "8px",
-    background: "rgba(56, 189, 248, 0.1)",
-    padding: "12px 16px",
-    borderRadius: "12px",
-    marginTop: "16px",
-    border: "1px solid rgba(56, 189, 248, 0.2)"
+    fontSize: "12px"
   },
   
-  previewNoteIcon: {
-    fontSize: "16px"
+  mobileDetailLabel: {
+    color: "#94a3b8",
+    minWidth: "40px"
   },
   
-  previewNoteText: {
-    fontSize: "13px",
-    color: "#38bdf8"
+  mobileDetailValue: {
+    color: "#ffffff",
+    fontWeight: "500",
+    wordBreak: "break-all"
   },
   
-  footer: {
-    marginTop: "32px",
-    paddingTop: "24px",
+  // Table Footer
+  tableFooter: {
+    padding: "10px 16px",
+    fontSize: "11px",
+    color: "#64748b",
+    textAlign: "center",
+    background: "rgba(30, 41, 59, 0.8)",
+    borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+    '@media (max-width: 768px)': {
+      padding: '8px 12px',
+      fontSize: '10px'
+    }
+  },
+  
+  // Empty State
+  emptyState: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "40px 20px",
+    textAlign: "center"
+  },
+  
+  emptyStateIcon: {
+    fontSize: "48px",
+    marginBottom: "16px",
+    opacity: 0.5,
+    '@media (max-width: 768px)': {
+      fontSize: '40px'
+    }
+  },
+  
+  emptyStateTitle: {
+    fontSize: "18px",
+    color: "#ffffff",
+    margin: "0 0 8px 0",
+    fontWeight: "600",
+    '@media (max-width: 768px)': {
+      fontSize: '16px'
+    }
+  },
+  
+  emptyStateText: {
+    fontSize: "14px",
+    color: "#94a3b8",
+    maxWidth: "300px",
+    lineHeight: "1.5",
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
+  },
+  
+  // Mobile Footer
+  mobileFooter: {
+    marginTop: "24px",
+    paddingTop: "16px",
     borderTop: "1px solid rgba(255, 255, 255, 0.1)"
   },
   
-  footerContent: {
+  mobileFooterContent: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center"
   },
   
-  footerText: {
-    fontSize: "13px",
+  mobileFooterText: {
+    fontSize: "11px",
     color: "#64748b"
   },
   
-  footerStats: {
-    display: "flex",
-    alignItems: "center"
-  },
-  
-  processingStats: {
+  mobileProgress: {
     display: "flex",
     alignItems: "center",
     gap: "8px"
   },
   
-  processingText: {
-    fontSize: "13px",
+  mobileProgressText: {
+    fontSize: "11px",
     color: "#94a3b8"
   }
 };
 
-// Add global styles
+// Add global styles with responsive media queries
 const globalStyles = document.createElement('style');
 globalStyles.textContent = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   
   * {
     margin: 0;
@@ -1506,6 +1598,7 @@ globalStyles.textContent = `
   
   body {
     margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     overflow-x: hidden;
   }
   
@@ -1519,40 +1612,62 @@ globalStyles.textContent = `
     50% { opacity: 0.5; }
   }
   
-  @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-  }
-  
   input:checked + span {
     background-color: rgba(102, 126, 234, 0.5);
   }
   
   input:checked + span:before {
-    transform: translateX(24px);
+    transform: translateX(22px);
   }
   
-  input:focus + span {
-    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+  @media (max-width: 768px) {
+    input:checked + span:before {
+      transform: translateX(20px);
+    }
   }
   
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
   
   ::-webkit-scrollbar-track {
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 4px;
+    border-radius: 3px;
   }
   
   ::-webkit-scrollbar-thumb {
     background: rgba(102, 126, 234, 0.3);
-    border-radius: 4px;
+    border-radius: 3px;
   }
   
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(102, 126, 234, 0.5);
+  }
+  
+  /* Touch-friendly styles for mobile */
+  @media (max-width: 768px) {
+    button, 
+    input[type="checkbox"] + span,
+    label {
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    button:active {
+      opacity: 0.8;
+    }
+    
+    /* Prevent zoom on input focus */
+    input, select, textarea {
+      font-size: 16px;
+    }
+  }
+  
+  /* Print styles */
+  @media print {
+    .no-print {
+      display: none !important;
+    }
   }
 `;
 document.head.appendChild(globalStyles);
