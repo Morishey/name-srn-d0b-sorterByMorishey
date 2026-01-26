@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 export default function App() {
   const [file, setFile] = useState(null);
@@ -9,6 +9,20 @@ export default function App() {
   const [processing, setProcessing] = useState(false);
   const [includeSeparators, setIncludeSeparators] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
+  const [fileFormat, setFileFormat] = useState("auto"); // "auto", "tab", "pipe"
+  const [sortOrder, setSortOrder] = useState("first-last"); // "first-last", "last-first", "dob"
+  const [filters, setFilters] = useState({
+    minYear: 1940,
+    maxYear: new Date().getFullYear(),
+    uniqueOnly: false
+  });
+  const [stats, setStats] = useState({
+    totalRecords: 0,
+    validRecords: 0,
+    duplicateRecords: 0,
+    invalidRecords: 0
+  });
+  const fileInputRef = useRef(null);
 
   // Detect mobile screen on mount and resize
   useEffect(() => {
@@ -28,19 +42,87 @@ export default function App() {
     const parts = fullName.trim().split(" ");
     const firstName = parts[0] || "";
     const lastName = parts.length > 1 ? parts[parts.length - 1] : "";
-    return { firstName, lastName };
+    const middleName = parts.length > 2 ? parts.slice(1, -1).join(" ") : "";
+    
+    return { firstName, lastName, middleName, fullName: fullName.trim() };
+  }, []);
+
+  const parseDate = useCallback((dateStr) => {
+    if (!dateStr) return null;
+    const date = new Date(dateStr);
+    return isNaN(date.getTime()) ? null : date;
   }, []);
 
   const handleFile = useCallback((e) => {
     const f = e.target.files[0];
     if (!f) return;
 
+    if (!f.name.toLowerCase().endsWith('.txt')) {
+      alert("Please upload a .txt file");
+      return;
+    }
+
     setFile(f);
     setFileName(f.name);
     setProgress(0);
     setStatus("File loaded. Ready to sort.");
     setResults([]);
+    setStats({
+      totalRecords: 0,
+      validRecords: 0,
+      duplicateRecords: 0,
+      invalidRecords: 0
+    });
   }, []);
+
+  const detectFileFormat = useCallback((firstFewLines) => {
+    for (const line of firstFewLines) {
+      if (line.includes("|")) {
+        const parts = line.split("|");
+        if (parts.length >= 3) {
+          // Check if it's a valid data line (not a separator)
+          if (!line.includes("====================================")) {
+            return "pipe";
+          }
+        }
+      }
+      if (line.includes("\t")) {
+        const parts = line.split("\t");
+        if (parts.length >= 3) {
+          return "tab";
+        }
+      }
+    }
+    return "auto";
+  }, []);
+
+  const validateRecord = useCallback((record) => {
+    const errors = [];
+    
+    if (!record.name || record.name.trim() === "") {
+      errors.push("Missing name");
+    }
+    
+    if (!record.dob || !/^\d{4}-\d{2}-\d{2}$/.test(record.dob)) {
+      errors.push("Invalid date format");
+    } else {
+      const date = parseDate(record.dob);
+      if (!date) {
+        errors.push("Invalid date");
+      } else if (date < new Date("1940-01-01")) {
+        errors.push("Date before 1940");
+      }
+    }
+    
+    if (!record.ssn || !/^\d{3}-\d{2}-\d{4}$/.test(record.ssn)) {
+      errors.push("Invalid SSN format");
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }, [parseDate]);
 
   const sortFile = useCallback(async () => {
     if (!file) {
@@ -49,15 +131,31 @@ export default function App() {
     }
 
     setProcessing(true);
-    setStatus("Processing...");
+    setStatus("Analyzing file format...");
     setProgress(0);
     
     const processFileChunked = async (text) => {
       const lines = text.split("\n");
-      const cutoff = new Date("1940-01-01");
+      const cutoff = new Date(`${filters.minYear}-01-01`);
+      const maxDate = new Date(`${filters.maxYear}-12-31`);
       const seenKeys = new Set();
       const output = [];
+      const stats = {
+        totalRecords: 0,
+        validRecords: 0,
+        duplicateRecords: 0,
+        invalidRecords: 0
+      };
+      
       const totalChunks = Math.ceil(lines.length / CHUNK_SIZE);
+
+      // Auto-detect format if needed
+      let actualFormat = fileFormat;
+      if (fileFormat === "auto") {
+        const sampleLines = lines.slice(0, 20).filter(l => l.trim() && !l.includes("===================================="));
+        actualFormat = detectFileFormat(sampleLines);
+        setStatus(`Detected format: ${actualFormat === "pipe" ? "Pipe-separated" : "Tab-separated"}`);
+      }
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         const start = chunkIndex * CHUNK_SIZE;
@@ -68,42 +166,59 @@ export default function App() {
             for (const line of chunk) {
               if (!line.trim()) continue;
               
-              const cols = line.trim().split("\t");
-              if (cols.length < 3) continue;
-
-              let dob = null;
-              for (const col of cols) {
-                if (/^\d{4}-\d{2}-\d{2}$/.test(col) && !col.includes("-00")) {
-                  dob = col;
-                  break;
-                }
-              }
-              if (!dob) continue;
-
-              const dobDate = new Date(dob);
-              if (dobDate < cutoff) continue;
-
-              let ssn = null;
-              for (const col of cols) {
-                if (/^\d{3}-\d{2}-\d{4}$/.test(col)) {
-                  ssn = col;
-                  break;
-                }
-              }
-              if (!ssn) continue;
-
-              const key = `${ssn}|${dob}`;
-              if (seenKeys.has(key)) continue;
-
-              const nameParts = [];
-              if (cols[1]) nameParts.push(cols[1]);
-              if (cols[3]) nameParts.push(cols[3]);
-              if (cols[2]) nameParts.push(cols[2]);
+              stats.totalRecords++;
               
-              const name = nameParts.join(" ").trim();
-              if (!name) continue;
-
-              const { firstName, lastName } = extractFirstAndLastName(name);
+              // Skip separator lines
+              if (line.includes("====================================")) {
+                continue;
+              }
+              
+              let name = "", dob = "", ssn = "";
+              
+              if (actualFormat === "pipe" || line.includes("|")) {
+                const pipeCols = line.trim().split("|");
+                if (pipeCols.length >= 3) {
+                  [name, dob, ssn] = pipeCols;
+                }
+              } else {
+                // Tab-separated format
+                const tabCols = line.trim().split("\t");
+                if (tabCols.length >= 3) {
+                  // Try to find dob and ssn
+                  for (const col of tabCols) {
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(col) && !col.includes("-00")) {
+                      dob = col;
+                    } else if (/^\d{3}-\d{2}-\d{4}$/.test(col)) {
+                      ssn = col;
+                    }
+                  }
+                  // Extract name from common positions
+                  if (tabCols[1]) name = tabCols[1];
+                  if (tabCols[2] && !/^\d/.test(tabCols[2])) name += " " + tabCols[2];
+                  if (tabCols[3] && !/^\d/.test(tabCols[3])) name += " " + tabCols[3];
+                  name = name.trim();
+                }
+              }
+              
+              const validation = validateRecord({ name, dob, ssn });
+              if (!validation.isValid) {
+                stats.invalidRecords++;
+                continue;
+              }
+              
+              const dobDate = parseDate(dob);
+              if (!dobDate || dobDate < cutoff || dobDate > maxDate) {
+                stats.invalidRecords++;
+                continue;
+              }
+              
+              const key = filters.uniqueOnly ? `${name}|${dob}|${ssn}` : `${ssn}|${dob}`;
+              if (seenKeys.has(key)) {
+                stats.duplicateRecords++;
+                continue;
+              }
+              
+              const { firstName, lastName, middleName } = extractFirstAndLastName(name);
               
               seenKeys.add(key);
               output.push({ 
@@ -111,18 +226,24 @@ export default function App() {
                 dob, 
                 ssn,
                 firstName,
-                lastName
+                lastName,
+                middleName,
+                year: dobDate.getFullYear()
               });
+              stats.validRecords++;
             }
             resolve();
           });
         });
 
         if (chunkIndex % 5 === 0 || chunkIndex === totalChunks - 1) {
-          setProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+          const currentProgress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+          setProgress(currentProgress);
+          setStatus(`Processing... ${currentProgress}% (${stats.validRecords} valid records found)`);
         }
       }
 
+      setStats(stats);
       return output;
     };
 
@@ -130,12 +251,30 @@ export default function App() {
       const text = await file.text();
       const output = await processFileChunked(text);
 
+      // Sort based on selected order
       output.sort((a, b) => {
-        const firstNameCompare = a.firstName.localeCompare(b.firstName);
-        if (firstNameCompare !== 0) return firstNameCompare;
-        
-        const lastNameCompare = a.lastName.localeCompare(b.lastName);
-        if (lastNameCompare !== 0) return lastNameCompare;
+        if (sortOrder === "last-first") {
+          const lastNameCompare = a.lastName.localeCompare(b.lastName);
+          if (lastNameCompare !== 0) return lastNameCompare;
+          
+          const firstNameCompare = a.firstName.localeCompare(b.firstName);
+          if (firstNameCompare !== 0) return firstNameCompare;
+        } else if (sortOrder === "dob") {
+          const dateA = new Date(a.dob);
+          const dateB = new Date(b.dob);
+          if (dateA < dateB) return -1;
+          if (dateA > dateB) return 1;
+          
+          const lastNameCompare = a.lastName.localeCompare(b.lastName);
+          if (lastNameCompare !== 0) return lastNameCompare;
+        } else {
+          // Default: first-last
+          const firstNameCompare = a.firstName.localeCompare(b.firstName);
+          if (firstNameCompare !== 0) return firstNameCompare;
+          
+          const lastNameCompare = a.lastName.localeCompare(b.lastName);
+          if (lastNameCompare !== 0) return lastNameCompare;
+        }
         
         const dateA = new Date(a.dob);
         const dateB = new Date(b.dob);
@@ -147,34 +286,31 @@ export default function App() {
 
       setResults(output);
       setProgress(100);
-      setStatus(`✅ ${output.length.toLocaleString()} records sorted`);
+      setStatus(`✅ ${output.length.toLocaleString()} records sorted successfully`);
     } catch (error) {
-      setStatus("❌ Error processing file");
+      setStatus(`❌ Error: ${error.message}`);
       console.error(error);
     } finally {
       setProcessing(false);
     }
-  }, [file, extractFirstAndLastName]);
+  }, [file, fileFormat, sortOrder, filters, detectFileFormat, validateRecord, parseDate, extractFirstAndLastName]);
 
   const generateContentWithSeparators = useCallback(() => {
     if (results.length === 0) return "";
     
     const contentLines = [];
-    let lastFullName = "";
+    let currentFullName = "";
     
     results.forEach((row, index) => {
       const { firstName, lastName } = extractFirstAndLastName(row.name);
-      const currentFullName = `${firstName} ${lastName}`;
+      const fullName = `${firstName} ${lastName}`;
       
-      const shouldAddSeparator = includeSeparators && index > 0 && currentFullName !== lastFullName;
-      
-      if (shouldAddSeparator) {
-        contentLines.push(`==================================== ${currentFullName}`);
+      if (includeSeparators && fullName !== currentFullName) {
+        contentLines.push(`==================================== ${fullName}`);
+        currentFullName = fullName;
       }
       
       contentLines.push(`${row.name}|${row.dob}|${row.ssn}`);
-      
-      lastFullName = currentFullName;
     });
     
     return contentLines.join("\n");
@@ -210,6 +346,45 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [results, fileName, includeSeparators, generateContentWithSeparators, generateContentWithoutSeparators]);
 
+  const resetApp = useCallback(() => {
+    setFile(null);
+    setFileName("");
+    setProgress(0);
+    setStatus("");
+    setResults([]);
+    setProcessing(false);
+    setStats({
+      totalRecords: 0,
+      validRecords: 0,
+      duplicateRecords: 0,
+      invalidRecords: 0
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const f = files[0];
+      if (f.name.toLowerCase().endsWith('.txt')) {
+        const event = { target: { files: [f] } };
+        handleFile(event);
+      } else {
+        alert("Please drop a .txt file");
+      }
+    }
+  }, [handleFile]);
+
   // Responsive preview display
   const previewRows = useMemo(() => {
     if (results.length === 0) return [];
@@ -220,6 +395,17 @@ export default function App() {
   const fileSizeMB = useMemo(() => {
     return file ? (file.size / (1024 * 1024)).toFixed(2) : 0;
   }, [file]);
+
+  const yearDistribution = useMemo(() => {
+    const distribution = {};
+    results.forEach(row => {
+      const year = row.year;
+      distribution[year] = (distribution[year] || 0) + 1;
+    });
+    return Object.entries(distribution)
+      .sort(([a], [b]) => a - b)
+      .slice(0, 5);
+  }, [results]);
 
   return (
     <div style={styles.page}>
@@ -235,11 +421,11 @@ export default function App() {
         {/* Responsive Header */}
         <header style={styles.header}>
           <div style={styles.logo}>
-            <div style={styles.logoIcon}>📊</div>
+            <div style={styles.logoIcon}>🚀</div>
             <div style={styles.logoText}>
               <h1 style={styles.title}>Mosort Pro</h1>
               <p style={styles.subtitle}>
-                {isMobile ? "File Processor" : "Intelligent Text File Processor"}
+                {isMobile ? "Advanced File Processor" : "Advanced Text File Processor with AI"}
               </p>
             </div>
           </div>
@@ -253,15 +439,45 @@ export default function App() {
                   <div style={styles.statLabel}>Processing</div>
                 </div>
               </div>
+              <div style={styles.statCard}>
+                <div style={styles.statIcon}>🛡️</div>
+                <div style={styles.statContent}>
+                  <div style={styles.statValue}>Secure</div>
+                  <div style={styles.statLabel}>Local Only</div>
+                </div>
+              </div>
             </div>
           )}
         </header>
 
+        {/* Stats Banner */}
+        {stats.totalRecords > 0 && (
+          <div style={styles.statsBanner}>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Total:</span>
+              <span style={styles.statItemValue}>{stats.totalRecords}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Valid:</span>
+              <span style={styles.statItemValueSuccess}>{stats.validRecords}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Duplicates:</span>
+              <span style={styles.statItemValueWarning}>{stats.duplicateRecords}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Invalid:</span>
+              <span style={styles.statItemValueError}>{stats.invalidRecords}</span>
+            </div>
+          </div>
+        )}
+
         {/* Main Content - Stack on mobile */}
         <div style={styles.mainContent}>
           
-          {/* File Upload Section */}
+          {/* Left Column - Controls */}
           <div style={styles.section}>
+            {/* File Upload Section */}
             <div style={styles.uploadCard}>
               <div style={styles.uploadHeader}>
                 <h3 style={styles.cardTitle}>
@@ -270,8 +486,14 @@ export default function App() {
                 <div style={styles.fileTypeBadge}>TXT</div>
               </div>
               
-              <label htmlFor="file-upload" style={styles.uploadLabel}>
+              <label 
+                htmlFor="file-upload" 
+                style={styles.uploadLabel}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
                 <input
+                  ref={fileInputRef}
                   id="file-upload"
                   type="file"
                   accept=".txt"
@@ -282,6 +504,11 @@ export default function App() {
                 <div style={styles.uploadArea}>
                   <div style={styles.uploadIconContainer}>
                     <div style={styles.uploadIcon}>📁</div>
+                    {processing && (
+                      <div style={styles.uploadOverlay}>
+                        <div style={styles.uploadSpinner}></div>
+                      </div>
+                    )}
                   </div>
                   <p style={styles.uploadText}>
                     {file ? (
@@ -306,61 +533,176 @@ export default function App() {
                   )}
                   {!file && (
                     <div style={styles.uploadHint}>
-                      .txt files with tab-separated values
+                      Supports .txt files (tab or pipe separated)
                     </div>
                   )}
                 </div>
               </label>
             </div>
 
-            {/* Processing Controls */}
-            <div style={styles.controlsCard}>
-              <div style={styles.controlsHeader}>
+            {/* Processing Settings */}
+            <div style={styles.settingsCard}>
+              <div style={styles.settingsHeader}>
                 <h3 style={styles.cardTitle}>
-                  {isMobile ? "⚙️ Controls" : "Processing Controls"}
+                  {isMobile ? "⚙️ Settings" : "Processing Settings"}
                 </h3>
-                <div style={styles.statusIndicator}>
-                  <div style={{
-                    ...styles.statusDot,
-                    backgroundColor: processing ? '#ff6b6b' : '#48bb78'
-                  }}></div>
-                  <span style={styles.statusText}>
-                    {processing ? 'Processing' : 'Ready'}
-                  </span>
+              </div>
+
+              {/* File Format */}
+              <div style={styles.settingGroup}>
+                <label style={styles.settingGroupLabel}>File Format</label>
+                <div style={styles.radioGroup}>
+                  {["auto", "tab", "pipe"].map(format => (
+                    <label key={format} style={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="format"
+                        value={format}
+                        checked={fileFormat === format}
+                        onChange={(e) => setFileFormat(e.target.value)}
+                        style={styles.radioInput}
+                        disabled={processing}
+                      />
+                      <span style={styles.radioText}>
+                        {format === "auto" ? "Auto-detect" : 
+                         format === "tab" ? "Tab-separated" : "Pipe-separated"}
+                      </span>
+                    </label>
+                  ))}
                 </div>
               </div>
 
-              <button
-                onClick={sortFile}
-                disabled={!file || processing}
-                style={{
-                  ...styles.button,
-                  ...styles.primaryButton,
-                  ...(processing && styles.disabledButton),
-                  ...(isMobile && styles.mobileButton)
-                }}
-              >
-                <div style={styles.buttonContent}>
-                  {processing ? (
-                    <>
-                      <div style={styles.spinnerContainer}>
-                        <div style={styles.spinner}></div>
-                      </div>
-                      <span>{isMobile ? "Processing..." : "Processing Data..."}</span>
-                    </>
-                  ) : (
-                    <>
-                      <div style={styles.buttonIcon}>🚀</div>
-                      <span>{isMobile ? "Process File" : "Start Processing"}</span>
-                    </>
-                  )}
+              {/* Sort Order */}
+              <div style={styles.settingGroup}>
+                <label style={styles.settingGroupLabel}>Sort Order</label>
+                <div style={styles.radioGroup}>
+                  {["first-last", "last-first", "dob"].map(order => (
+                    <label key={order} style={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="sortOrder"
+                        value={order}
+                        checked={sortOrder === order}
+                        onChange={(e) => setSortOrder(e.target.value)}
+                        style={styles.radioInput}
+                        disabled={processing}
+                      />
+                      <span style={styles.radioText}>
+                        {order === "first-last" ? "First → Last" : 
+                         order === "last-first" ? "Last → First" : "Date of Birth"}
+                      </span>
+                    </label>
+                  ))}
                 </div>
-              </button>
+              </div>
+
+              {/* Filters */}
+              <div style={styles.settingGroup}>
+                <label style={styles.settingGroupLabel}>Filters</label>
+                <div style={styles.filterControls}>
+                  <div style={styles.filterRow}>
+                    <span style={styles.filterLabel}>Year Range:</span>
+                    <div style={styles.filterInputs}>
+                      <input
+                        type="number"
+                        value={filters.minYear}
+                        onChange={(e) => setFilters(prev => ({...prev, minYear: parseInt(e.target.value) || 1940}))}
+                        style={styles.yearInput}
+                        min="1900"
+                        max={filters.maxYear}
+                        disabled={processing}
+                      />
+                      <span style={styles.filterSeparator}>to</span>
+                      <input
+                        type="number"
+                        value={filters.maxYear}
+                        onChange={(e) => setFilters(prev => ({...prev, maxYear: parseInt(e.target.value) || new Date().getFullYear()}))}
+                        style={styles.yearInput}
+                        min={filters.minYear}
+                        max="2100"
+                        disabled={processing}
+                      />
+                    </div>
+                  </div>
+                  <label style={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={filters.uniqueOnly}
+                      onChange={(e) => setFilters(prev => ({...prev, uniqueOnly: e.target.checked}))}
+                      style={styles.checkboxInput}
+                      disabled={processing}
+                    />
+                    <span style={styles.checkboxText}>Remove duplicate records</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Output Settings */}
+              <div style={styles.settingGroup}>
+                <label style={styles.settingGroupLabel}>Output Settings</label>
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={includeSeparators}
+                    onChange={(e) => setIncludeSeparators(e.target.checked)}
+                    style={styles.checkboxInput}
+                    disabled={processing}
+                  />
+                  <span style={styles.checkboxText}>Add group separators</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={styles.actionsCard}>
+              <div style={styles.buttonGrid}>
+                <button
+                  onClick={sortFile}
+                  disabled={!file || processing}
+                  style={{
+                    ...styles.button,
+                    ...styles.primaryButton,
+                    ...(processing && styles.disabledButton),
+                    ...(isMobile && styles.mobileButton)
+                  }}
+                >
+                  <div style={styles.buttonContent}>
+                    {processing ? (
+                      <>
+                        <div style={styles.spinnerContainer}>
+                          <div style={styles.spinner}></div>
+                        </div>
+                        <span>Processing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <div style={styles.buttonIcon}>🚀</div>
+                        <span>Process File</span>
+                      </>
+                    )}
+                  </div>
+                </button>
+
+                <button
+                  onClick={resetApp}
+                  disabled={processing}
+                  style={{
+                    ...styles.button,
+                    ...styles.secondaryButton,
+                    ...(isMobile && styles.mobileButton)
+                  }}
+                >
+                  <div style={styles.buttonContent}>
+                    <div style={styles.buttonIcon}>🔄</div>
+                    <span>Reset</span>
+                  </div>
+                </button>
+              </div>
 
               {/* Progress Section */}
               <div style={styles.progressCard}>
                 <div style={styles.progressHeader}>
-                  <span style={styles.progressLabel}>Progress</span>
+                  <span style={styles.progressLabel}>Processing Progress</span>
                   <span style={styles.progressPercent}>{progress}%</span>
                 </div>
                 <div style={styles.progressContainer}>
@@ -370,46 +712,16 @@ export default function App() {
                       width: `${progress}%`,
                       background: progress === 100 ? 
                         'linear-gradient(90deg, #10b981, #059669)' :
-                        'linear-gradient(90deg, #667eea, #9f7aea, #667eea)'
+                        'linear-gradient(90deg, #667eea, #9f7aea, #667eea)',
+                      boxShadow: progress === 100 ? 
+                        '0 0 20px rgba(16, 185, 129, 0.5)' :
+                        '0 0 20px rgba(102, 126, 234, 0.3)'
                     }} 
                   />
                 </div>
                 <p style={styles.statusMessage}>
-                  {status || (isMobile ? "Upload file to start" : "Upload a file to begin")}
+                  {status || (isMobile ? "Upload file to start" : "Upload a file to begin processing")}
                 </p>
-              </div>
-
-              {/* Settings - Collapsible on mobile */}
-              <div style={styles.settingsCard}>
-                <div style={styles.settingsHeader}>
-                  <h4 style={styles.settingsTitle}>
-                    {isMobile ? "⚙️ Settings" : "Output Settings"}
-                  </h4>
-                </div>
-                
-                <div style={styles.settingItem}>
-                  <label style={styles.settingLabel}>
-                    <div style={styles.settingInfo}>
-                      <span style={styles.settingName}>
-                        {isMobile ? "Add Separators" : "Group Separators"}
-                      </span>
-                      {!isMobile && (
-                        <span style={styles.settingDescription}>
-                          Add visual separators between name groups
-                        </span>
-                      )}
-                    </div>
-                    <div style={styles.switchContainer}>
-                      <input
-                        type="checkbox"
-                        checked={includeSeparators}
-                        onChange={(e) => setIncludeSeparators(e.target.checked)}
-                        style={styles.switchInput}
-                      />
-                      <span style={styles.switchSlider}></span>
-                    </div>
-                  </label>
-                </div>
               </div>
 
               {/* Download Button */}
@@ -419,7 +731,8 @@ export default function App() {
                   style={{
                     ...styles.button,
                     ...styles.successButton,
-                    ...(isMobile && styles.mobileButton)
+                    ...(isMobile && styles.mobileButton),
+                    marginTop: '16px'
                   }}
                 >
                   <div style={styles.buttonContent}>
@@ -430,7 +743,7 @@ export default function App() {
                       </div>
                       {!isMobile && (
                         <div style={styles.saveButtonSub}>
-                          {results.length.toLocaleString()} records
+                          {results.length.toLocaleString()} records • {includeSeparators ? "With separators" : "No separators"}
                         </div>
                       )}
                     </div>
@@ -440,13 +753,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* Results Section */}
+          {/* Right Column - Results */}
           <div style={styles.section}>
             <div style={styles.resultsCard}>
               <div style={styles.resultsHeader}>
                 <div style={styles.resultsTitle}>
                   <h3 style={styles.cardTitle}>
-                    {results.length > 0 ? '📋 Results' : '📊 Preview'}
+                    {results.length > 0 ? '📊 Results Preview' : '📋 Output Preview'}
                   </h3>
                   {results.length > 0 && (
                     <div style={styles.resultsStats}>
@@ -455,19 +768,57 @@ export default function App() {
                         <div style={styles.resultsStatLabel}>Records</div>
                       </div>
                       {!isMobile && (
-                        <div style={styles.resultsStat}>
-                          <div style={styles.resultsStatValue}>
-                            {new Set(results.map(r => `${r.firstName} ${r.lastName}`)).size}
+                        <>
+                          <div style={styles.resultsStat}>
+                            <div style={styles.resultsStatValue}>
+                              {new Set(results.map(r => `${r.firstName} ${r.lastName}`)).size}
+                            </div>
+                            <div style={styles.resultsStatLabel}>Unique Names</div>
                           </div>
-                          <div style={styles.resultsStatLabel}>Unique Names</div>
-                        </div>
+                          <div style={styles.resultsStat}>
+                            <div style={styles.resultsStatValue}>
+                              {new Set(results.map(r => r.year)).size}
+                            </div>
+                            <div style={styles.resultsStatLabel}>Years</div>
+                          </div>
+                        </>
                       )}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Results Display - Responsive table */}
+              {/* Year Distribution */}
+              {yearDistribution.length > 0 && !isMobile && (
+                <div style={styles.distributionCard}>
+                  <div style={styles.distributionHeader}>
+                    <span style={styles.distributionTitle}>Top Years</span>
+                  </div>
+                  <div style={styles.distributionBars}>
+                    {yearDistribution.map(([year, count]) => {
+                      const maxCount = Math.max(...yearDistribution.map(([, c]) => c));
+                      const width = (count / maxCount) * 100;
+                      return (
+                        <div key={year} style={styles.distributionItem}>
+                          <div style={styles.distributionLabel}>{year}</div>
+                          <div style={styles.distributionBarContainer}>
+                            <div 
+                              style={{
+                                ...styles.distributionBar,
+                                width: `${width}%`,
+                                background: `linear-gradient(90deg, #667eea, ${width > 70 ? '#9f7aea' : '#818cf8'})`
+                              }}
+                            />
+                          </div>
+                          <div style={styles.distributionCount}>{count}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Results Display */}
               {results.length > 0 ? (
                 <div style={styles.tableContainer}>
                   {!isMobile ? (
@@ -475,7 +826,7 @@ export default function App() {
                     <>
                       <div style={styles.tableHeader}>
                         <div style={styles.tableHeaderCell}>#</div>
-                        <div style={styles.tableHeaderCell}>Name</div>
+                        <div style={styles.tableHeaderCell}>Full Name</div>
                         <div style={styles.tableHeaderCell}>DOB</div>
                         <div style={styles.tableHeaderCell}>SSN</div>
                       </div>
@@ -483,23 +834,34 @@ export default function App() {
                       <div style={styles.tableBody}>
                         {previewRows.map((item, index) => (
                           <div key={index} style={styles.dataRow}>
-                            <div style={styles.dataCell}>{index + 1}</div>
+                            <div style={styles.dataCell}>
+                              <div style={styles.indexBadge}>{index + 1}</div>
+                            </div>
                             <div style={styles.dataCell}>
                               <div style={styles.nameCell}>
                                 <div style={styles.namePrimary}>{item.name}</div>
                                 <div style={styles.nameDetails}>
                                   <span style={styles.nameDetail}>
+                                    <span style={styles.nameDetailLabel}>First:</span>
                                     <span style={styles.nameDetailValue}>{item.firstName}</span>
                                   </span>
                                   <span style={styles.nameDetail}>
+                                    <span style={styles.nameDetailLabel}>Last:</span>
                                     <span style={styles.nameDetailValue}>{item.lastName}</span>
                                   </span>
+                                  {item.middleName && (
+                                    <span style={styles.nameDetail}>
+                                      <span style={styles.nameDetailLabel}>Middle:</span>
+                                      <span style={styles.nameDetailValue}>{item.middleName}</span>
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
                             <div style={styles.dataCell}>
                               <div style={styles.dobCell}>
                                 {item.dob}
+                                <div style={styles.yearBadge}>{item.year}</div>
                               </div>
                             </div>
                             <div style={styles.dataCell}>
@@ -523,11 +885,18 @@ export default function App() {
                           <div style={styles.mobileCardDetails}>
                             <div style={styles.mobileDetail}>
                               <span style={styles.mobileDetailLabel}>DOB:</span>
-                              <span style={styles.mobileDetailValue}>{item.dob}</span>
+                              <span style={styles.mobileDetailValue}>{item.dob} ({item.year})</span>
                             </div>
                             <div style={styles.mobileDetail}>
                               <span style={styles.mobileDetailLabel}>SSN:</span>
                               <span style={styles.mobileDetailValue}>{item.ssn}</span>
+                            </div>
+                            <div style={styles.mobileNameBreakdown}>
+                              <span style={styles.mobileNamePart}>{item.firstName}</span>
+                              {item.middleName && (
+                                <span style={styles.mobileNamePart}>{item.middleName}</span>
+                              )}
+                              <span style={styles.mobileNamePart}>{item.lastName}</span>
                             </div>
                           </div>
                         </div>
@@ -537,7 +906,14 @@ export default function App() {
                   
                   {results.length > previewRows.length && (
                     <div style={styles.tableFooter}>
-                      Showing {previewRows.length} of {results.length.toLocaleString()} records
+                      <div style={styles.tableFooterContent}>
+                        <span>Showing {previewRows.length} of {results.length.toLocaleString()} records</span>
+                        <span style={styles.tableFooterNote}>
+                          {sortOrder === "first-last" ? "Sorted by First Name → Last Name" :
+                           sortOrder === "last-first" ? "Sorted by Last Name → First Name" :
+                           "Sorted by Date of Birth"}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -548,28 +924,62 @@ export default function App() {
                   <p style={styles.emptyStateText}>
                     {isMobile ? 
                       "Upload and process a file to see results" : 
-                      "Upload a .txt file and process it to see results here"
+                      "Upload a .txt file and start processing to see the results here"
                     }
                   </p>
+                  <div style={styles.emptyStateTips}>
+                    <div style={styles.tipItem}>
+                      <span style={styles.tipIcon}>💡</span>
+                      <span style={styles.tipText}>Supports both tab and pipe separated formats</span>
+                    </div>
+                    <div style={styles.tipItem}>
+                      <span style={styles.tipIcon}>⚙️</span>
+                      <span style={styles.tipText}>Adjust settings for custom sorting and filtering</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
+
+            {/* Quick Actions */}
+            {results.length > 0 && !isMobile && (
+              <div style={styles.quickActions}>
+                <button
+                  onClick={() => navigator.clipboard.writeText(
+                    includeSeparators ? generateContentWithSeparators() : generateContentWithoutSeparators()
+                  )}
+                  style={styles.quickActionButton}
+                >
+                  <div style={styles.quickActionIcon}>📋</div>
+                  <span>Copy to Clipboard</span>
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  style={styles.quickActionButton}
+                >
+                  <div style={styles.quickActionIcon}>🖨️</div>
+                  <span>Print Preview</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Mobile Footer */}
-        {isMobile && (
-          <footer style={styles.mobileFooter}>
-            <div style={styles.mobileFooterContent}>
-              <span style={styles.mobileFooterText}>Mosort Pro • Mobile</span>
+        {/* Footer */}
+        <footer style={styles.footer}>
+          <div style={styles.footerContent}>
+            <span style={styles.footerText}>
+              Mosort Pro v2.0 • Advanced File Processor • {isMobile ? "Mobile" : "Desktop"} Mode
+            </span>
+            <div style={styles.footerStats}>
               {processing && (
-                <div style={styles.mobileProgress}>
-                  <span style={styles.mobileProgressText}>Processing: {progress}%</span>
-                </div>
+                <span style={styles.footerStat}>
+                  Processing: {progress}% • Memory: {(performance.memory?.usedJSHeapSize / 1024 / 1024).toFixed(1)}MB
+                </span>
               )}
             </div>
-          </footer>
-        )}
+          </div>
+        </footer>
       </div>
     </div>
   );
@@ -582,6 +992,7 @@ const styles = {
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     padding: "16px",
     position: "relative",
+    overflowX: "hidden",
     '@media (max-width: 768px)': {
       padding: "12px"
     }
@@ -600,17 +1011,87 @@ const styles = {
     alignItems: 'center',
     gap: '8px',
     zIndex: 1000,
-    border: '1px solid rgba(102, 126, 234, 0.3)'
+    border: '1px solid rgba(102, 126, 234, 0.3)',
+    animation: 'slideIn 0.3s ease'
   },
   
   mobileIcon: {
-    fontSize: '20px'
+    fontSize: '20px',
+    animation: 'bounce 2s infinite'
   },
   
   mobileText: {
     fontSize: '12px',
     color: '#e2e8f0',
     fontWeight: '500'
+  },
+  
+  // Stats Banner
+  statsBanner: {
+    display: 'flex',
+    justifyContent: 'space-around',
+    background: 'rgba(30, 41, 59, 0.8)',
+    borderRadius: '12px',
+    padding: '12px',
+    marginBottom: '20px',
+    border: '1px solid rgba(255, 255, 255, 0.05)',
+    flexWrap: 'wrap',
+    gap: '12px',
+    '@media (max-width: 768px)': {
+      padding: '8px',
+      gap: '8px'
+    }
+  },
+  
+  statItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  
+  statItemLabel: {
+    fontSize: '12px',
+    color: '#94a3b8',
+    fontWeight: '500',
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
+  },
+  
+  statItemValue: {
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#ffffff',
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
+  },
+  
+  statItemValueSuccess: {
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#10b981',
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
+  },
+  
+  statItemValueWarning: {
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#f59e0b',
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
+  },
+  
+  statItemValueError: {
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#ef4444',
+    '@media (max-width: 768px)': {
+      fontSize: '13px'
+    }
   },
   
   // Main Card
@@ -620,10 +1101,11 @@ const styles = {
     borderRadius: "20px",
     padding: "24px",
     width: "100%",
-    maxWidth: "1400px",
+    maxWidth: "1600px",
     margin: "0 auto",
-    boxShadow: "0 10px 40px rgba(0, 0, 0, 0.3)",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
     border: "1px solid rgba(255, 255, 255, 0.1)",
+    animation: "fadeIn 0.5s ease",
     '@media (max-width: 768px)': {
       padding: "16px",
       borderRadius: "16px"
@@ -635,14 +1117,14 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "32px",
+    marginBottom: "24px",
     paddingBottom: "20px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
     '@media (max-width: 768px)': {
       flexDirection: 'column',
       gap: '16px',
       alignItems: 'flex-start',
-      marginBottom: '24px',
+      marginBottom: '20px',
       paddingBottom: '16px'
     }
   },
@@ -666,6 +1148,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     boxShadow: "0 4px 20px rgba(102, 126, 234, 0.3)",
+    animation: "pulse 2s infinite",
     '@media (max-width: 768px)': {
       width: '44px',
       height: '44px',
@@ -721,6 +1204,11 @@ const styles = {
     padding: "10px 16px",
     borderRadius: "10px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
+    transition: "all 0.3s ease",
+    ':hover': {
+      transform: "translateY(-2px)",
+      borderColor: "rgba(102, 126, 234, 0.3)"
+    },
     '@media (max-width: 768px)': {
       padding: '8px 12px'
     }
@@ -780,7 +1268,12 @@ const styles = {
     borderRadius: "16px",
     padding: "20px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
-    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
+    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2)",
+    transition: "all 0.3s ease",
+    ':hover': {
+      borderColor: "rgba(102, 126, 234, 0.2)",
+      boxShadow: "0 12px 40px rgba(0, 0, 0, 0.3)"
+    },
     '@media (max-width: 768px)': {
       padding: '16px'
     }
@@ -829,9 +1322,11 @@ const styles = {
     background: "rgba(15, 23, 42, 0.4)",
     transition: "all 0.3s ease",
     textAlign: "center",
+    position: "relative",
     ':hover': {
       borderColor: "#667eea",
-      background: "rgba(15, 23, 42, 0.6)"
+      background: "rgba(15, 23, 42, 0.6)",
+      transform: "translateY(-2px)"
     },
     '@media (max-width: 768px)': {
       padding: '24px 16px'
@@ -839,15 +1334,40 @@ const styles = {
   },
   
   uploadIconContainer: {
-    marginBottom: "12px"
+    marginBottom: "12px",
+    position: "relative"
   },
   
   uploadIcon: {
-    fontSize: "40px",
+    fontSize: "48px",
     color: "#667eea",
+    transition: "all 0.3s ease",
     '@media (max-width: 768px)': {
-      fontSize: '36px'
+      fontSize: '40px'
     }
+  },
+  
+  uploadOverlay: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    background: "rgba(15, 23, 42, 0.8)",
+    width: "60px",
+    height: "60px",
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  
+  uploadSpinner: {
+    width: "24px",
+    height: "24px",
+    border: "2px solid rgba(102, 126, 234, 0.3)",
+    borderTop: "2px solid #667eea",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite"
   },
   
   uploadText: {
@@ -863,14 +1383,19 @@ const styles = {
   fileNameActive: {
     color: '#667eea',
     fontWeight: '600',
-    wordBreak: 'break-word'
+    wordBreak: 'break-word',
+    display: 'inline-block',
+    padding: '4px 8px',
+    background: 'rgba(102, 126, 234, 0.1)',
+    borderRadius: '6px'
   },
   
   fileInfo: {
-    background: "rgba(30, 41, 59, 0.6)",
+    background: "rgba(30, 41, 59, 0.8)",
     borderRadius: "10px",
     padding: "12px",
     marginBottom: "12px",
+    border: "1px solid rgba(255, 255, 255, 0.05)",
     '@media (max-width: 768px)': {
       padding: '10px'
     }
@@ -915,43 +1440,175 @@ const styles = {
     fontSize: "11px",
     color: "#64748b",
     fontStyle: "italic",
+    marginTop: "8px",
     '@media (max-width: 768px)': {
       fontSize: '10px'
     }
   },
   
-  // Controls Card
-  controlsCard: {
+  // Settings Card
+  settingsCard: {
+    background: "rgba(30, 41, 59, 0.6)",
+    borderRadius: "16px",
+    padding: "20px",
+    border: "1px solid rgba(255, 255, 255, 0.05)",
+    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
+    '@media (max-width: 768px)': {
+      padding: '16px'
+    }
+  },
+  
+  settingsHeader: {
+    marginBottom: "20px"
+  },
+  
+  settingGroup: {
+    marginBottom: "20px",
+    ':last-child': {
+      marginBottom: 0
+    }
+  },
+  
+  settingGroupLabel: {
+    display: "block",
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#e2e8f0",
+    marginBottom: "10px",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
+  },
+  
+  radioGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px"
+    gap: "8px"
   },
   
-  controlsHeader: {
+  radioLabel: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "8px"
+    gap: "8px",
+    cursor: "pointer",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    transition: "all 0.2s ease",
+    ':hover': {
+      background: "rgba(255, 255, 255, 0.05)"
+    }
   },
   
-  statusIndicator: {
+  radioInput: {
+    margin: 0,
+    width: "16px",
+    height: "16px",
+    accentColor: "#667eea"
+  },
+  
+  radioText: {
+    fontSize: "13px",
+    color: "#cbd5e1",
+    '@media (max-width: 768px)': {
+      fontSize: '12px'
+    }
+  },
+  
+  filterControls: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px"
+  },
+  
+  filterRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px"
+  },
+  
+  filterLabel: {
+    fontSize: "13px",
+    color: "#94a3b8",
+    minWidth: "80px",
+    '@media (max-width: 768px)': {
+      fontSize: '12px',
+      minWidth: '70px'
+    }
+  },
+  
+  filterInputs: {
     display: "flex",
     alignItems: "center",
     gap: "8px"
   },
   
-  statusDot: {
-    width: "8px",
-    height: "8px",
-    borderRadius: "50%",
-    animation: "pulse 2s infinite"
+  yearInput: {
+    background: "rgba(255, 255, 255, 0.05)",
+    border: "1px solid rgba(255, 255, 255, 0.1)",
+    borderRadius: "6px",
+    padding: "6px 10px",
+    color: "#ffffff",
+    fontSize: "13px",
+    width: "70px",
+    textAlign: "center",
+    outline: "none",
+    transition: "all 0.2s ease",
+    ':focus': {
+      borderColor: "#667eea",
+      boxShadow: "0 0 0 2px rgba(102, 126, 234, 0.2)"
+    },
+    '@media (max-width: 768px)': {
+      width: '60px',
+      fontSize: '12px'
+    }
   },
   
-  statusText: {
+  filterSeparator: {
     fontSize: "12px",
-    color: "#94a3b8",
+    color: "#94a3b8"
+  },
+  
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    transition: "all 0.2s ease",
+    ':hover': {
+      background: "rgba(255, 255, 255, 0.05)"
+    }
+  },
+  
+  checkboxInput: {
+    margin: 0,
+    width: "16px",
+    height: "16px",
+    accentColor: "#667eea"
+  },
+  
+  checkboxText: {
+    fontSize: "13px",
+    color: "#cbd5e1",
     '@media (max-width: 768px)': {
-      fontSize: '11px'
+      fontSize: '12px'
+    }
+  },
+  
+  // Actions Card
+  actionsCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px"
+  },
+  
+  buttonGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "12px",
+    '@media (max-width: 768px)': {
+      gridTemplateColumns: '1fr'
     }
   },
   
@@ -969,6 +1626,27 @@ const styles = {
     justifyContent: "center",
     gap: "10px",
     width: "100%",
+    position: "relative",
+    overflow: "hidden",
+    ':before': {
+      content: '""',
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      width: '0',
+      height: '0',
+      borderRadius: '50%',
+      background: 'rgba(255, 255, 255, 0.1)',
+      transform: 'translate(-50%, -50%)',
+      transition: 'width 0.6s, height 0.6s'
+    },
+    ':hover:before': {
+      width: '300px',
+      height: '300px'
+    },
+    ':active': {
+      transform: "scale(0.98)"
+    },
     '@media (max-width: 768px)': {
       padding: '14px 16px',
       fontSize: '14px'
@@ -985,6 +1663,8 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: "10px",
+    position: "relative",
+    zIndex: 1,
     '@media (max-width: 768px)': {
       gap: '8px'
     }
@@ -997,11 +1677,17 @@ const styles = {
     ':hover': {
       transform: "translateY(-2px)",
       boxShadow: "0 8px 30px rgba(102, 126, 234, 0.5)"
-    },
-    '@media (max-width: 768px)': {
-      ':active': {
-        transform: "scale(0.98)"
-      }
+    }
+  },
+  
+  secondaryButton: {
+    background: "rgba(255, 255, 255, 0.05)",
+    color: "#cbd5e1",
+    border: "1px solid rgba(255, 255, 255, 0.1)",
+    ':hover': {
+      background: "rgba(255, 255, 255, 0.1)",
+      borderColor: "rgba(255, 255, 255, 0.2)",
+      transform: "translateY(-2px)"
     }
   },
   
@@ -1069,6 +1755,7 @@ const styles = {
     fontSize: "11px",
     opacity: 0.9,
     fontWeight: "400",
+    marginTop: "2px",
     '@media (max-width: 768px)': {
       fontSize: '10px'
     }
@@ -1079,7 +1766,8 @@ const styles = {
     background: "rgba(30, 41, 59, 0.6)",
     borderRadius: "12px",
     padding: "16px",
-    border: "1px solid rgba(255, 255, 255, 0.05)"
+    border: "1px solid rgba(255, 255, 255, 0.05)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)"
   },
   
   progressHeader: {
@@ -1110,17 +1798,30 @@ const styles = {
   },
   
   progressContainer: {
-    height: "6px",
+    height: "8px",
     background: "rgba(255, 255, 255, 0.05)",
-    borderRadius: "3px",
+    borderRadius: "4px",
     overflow: "hidden",
-    marginBottom: "10px"
+    marginBottom: "12px",
+    position: "relative"
   },
   
   progressBar: {
     height: "100%",
-    borderRadius: "3px",
-    transition: "width 0.3s ease"
+    borderRadius: "4px",
+    transition: "width 0.3s ease, box-shadow 0.3s ease",
+    position: "relative",
+    overflow: "hidden",
+    ':after': {
+      content: '""',
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      backgroundImage: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent)',
+      animation: 'shimmer 2s infinite'
+    }
   },
   
   statusMessage: {
@@ -1129,118 +1830,9 @@ const styles = {
     margin: 0,
     textAlign: "center",
     minHeight: "18px",
+    lineHeight: "1.4",
     '@media (max-width: 768px)': {
       fontSize: '11px'
-    }
-  },
-  
-  // Settings Card
-  settingsCard: {
-    background: "rgba(30, 41, 59, 0.6)",
-    borderRadius: "12px",
-    padding: "16px",
-    border: "1px solid rgba(255, 255, 255, 0.05)"
-  },
-  
-  settingsHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "16px"
-  },
-  
-  settingsTitle: {
-    fontSize: "14px",
-    fontWeight: "600",
-    color: "#ffffff",
-    margin: 0,
-    '@media (max-width: 768px)': {
-      fontSize: '13px'
-    }
-  },
-  
-  settingItem: {
-    marginBottom: "12px",
-    ':last-child': {
-      marginBottom: 0
-    }
-  },
-  
-  settingLabel: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    cursor: "pointer"
-  },
-  
-  settingInfo: {
-    display: "flex",
-    flexDirection: "column",
-    flex: 1
-  },
-  
-  settingName: {
-    fontSize: "13px",
-    color: "#e2e8f0",
-    fontWeight: "500",
-    marginBottom: "4px",
-    '@media (max-width: 768px)': {
-      fontSize: '12px'
-    }
-  },
-  
-  settingDescription: {
-    fontSize: "11px",
-    color: "#94a3b8",
-    '@media (max-width: 768px)': {
-      fontSize: '10px'
-    }
-  },
-  
-  switchContainer: {
-    position: "relative",
-    width: "48px",
-    height: "26px",
-    '@media (max-width: 768px)': {
-      width: '44px',
-      height: '24px'
-    }
-  },
-  
-  switchInput: {
-    opacity: 0,
-    width: 0,
-    height: 0,
-    position: "absolute"
-  },
-  
-  switchSlider: {
-    position: "absolute",
-    cursor: "pointer",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: "34px",
-    transition: ".4s",
-    ':before': {
-      position: "absolute",
-      content: '""',
-      height: "18px",
-      width: "18px",
-      left: "4px",
-      bottom: "4px",
-      backgroundColor: "white",
-      borderRadius: "50%",
-      transition: ".4s",
-      boxShadow: "0 2px 6px rgba(0, 0, 0, 0.2)"
-    },
-    '@media (max-width: 768px)': {
-      ':before': {
-        height: '16px',
-        width: '16px'
-      }
     }
   },
   
@@ -1250,14 +1842,14 @@ const styles = {
     borderRadius: "16px",
     padding: "20px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
-    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
+    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2)",
     height: "100%",
     display: "flex",
     flexDirection: "column",
-    minHeight: "400px",
+    minHeight: "500px",
     '@media (max-width: 768px)': {
       padding: '16px',
-      minHeight: '300px'
+      minHeight: '400px'
     }
   },
   
@@ -1279,10 +1871,11 @@ const styles = {
   
   resultsStats: {
     display: "flex",
-    gap: "16px",
+    gap: "20px",
     '@media (max-width: 768px)': {
       width: '100%',
-      justifyContent: 'space-between'
+      justifyContent: 'space-between',
+      gap: '12px'
     }
   },
   
@@ -1314,11 +1907,71 @@ const styles = {
     }
   },
   
+  // Distribution Card
+  distributionCard: {
+    background: "rgba(30, 41, 59, 0.8)",
+    borderRadius: "12px",
+    padding: "16px",
+    marginBottom: "20px",
+    border: "1px solid rgba(255, 255, 255, 0.05)"
+  },
+  
+  distributionHeader: {
+    marginBottom: "12px"
+  },
+  
+  distributionTitle: {
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#e2e8f0"
+  },
+  
+  distributionBars: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px"
+  },
+  
+  distributionItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px"
+  },
+  
+  distributionLabel: {
+    fontSize: "11px",
+    color: "#94a3b8",
+    minWidth: "40px",
+    fontWeight: "500"
+  },
+  
+  distributionBarContainer: {
+    flex: 1,
+    height: "8px",
+    background: "rgba(255, 255, 255, 0.05)",
+    borderRadius: "4px",
+    overflow: "hidden"
+  },
+  
+  distributionBar: {
+    height: "100%",
+    borderRadius: "4px",
+    transition: "width 1s ease"
+  },
+  
+  distributionCount: {
+    fontSize: "11px",
+    color: "#cbd5e1",
+    fontWeight: "600",
+    minWidth: "24px",
+    textAlign: "right"
+  },
+  
   // Table Container
   tableContainer: {
     flex: 1,
     overflow: "hidden",
-    borderRadius: "10px",
+    borderRadius: "12px",
     border: "1px solid rgba(255, 255, 255, 0.05)",
     background: "rgba(15, 23, 42, 0.4)",
     display: "flex",
@@ -1327,15 +1980,16 @@ const styles = {
   
   tableHeader: {
     display: "grid",
-    gridTemplateColumns: "60px 1fr 100px 120px",
-    background: "rgba(30, 41, 59, 0.8)",
+    gridTemplateColumns: "60px 1fr 120px 140px",
+    background: "rgba(30, 41, 59, 0.9)",
     padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
     position: "sticky",
     top: 0,
     zIndex: 10,
+    backdropFilter: "blur(10px)",
     '@media (max-width: 1024px)': {
-      gridTemplateColumns: '50px 1fr 90px 110px'
+      gridTemplateColumns: '50px 1fr 100px 120px'
     }
   },
   
@@ -1358,17 +2012,19 @@ const styles = {
   
   dataRow: {
     display: "grid",
-    gridTemplateColumns: "60px 1fr 100px 120px",
+    gridTemplateColumns: "60px 1fr 120px 140px",
     padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.03)",
+    transition: "all 0.2s ease",
     ':hover': {
-      background: "rgba(255, 255, 255, 0.02)"
+      background: "rgba(255, 255, 255, 0.02)",
+      transform: "translateX(4px)"
     },
     ':nth-child(odd)': {
       background: "rgba(255, 255, 255, 0.01)"
     },
     '@media (max-width: 1024px)': {
-      gridTemplateColumns: '50px 1fr 90px 110px',
+      gridTemplateColumns: '50px 1fr 100px 120px',
       padding: '10px 12px'
     }
   },
@@ -1378,16 +2034,29 @@ const styles = {
     alignItems: "center"
   },
   
+  indexBadge: {
+    background: "rgba(102, 126, 234, 0.1)",
+    color: "#667eea",
+    width: "28px",
+    height: "28px",
+    borderRadius: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "12px",
+    fontWeight: "700"
+  },
+  
   nameCell: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px"
+    gap: "6px"
   },
   
   namePrimary: {
     fontSize: "13px",
     color: "#ffffff",
-    fontWeight: "500",
+    fontWeight: "600",
     lineHeight: "1.3",
     wordBreak: "break-word",
     '@media (max-width: 1024px)': {
@@ -1397,6 +2066,7 @@ const styles = {
   
   nameDetails: {
     display: "flex",
+    flexWrap: "wrap",
     gap: "8px",
     fontSize: "10px"
   },
@@ -1404,15 +2074,22 @@ const styles = {
   nameDetail: {
     display: "flex",
     alignItems: "center",
-    gap: "2px"
+    gap: "4px",
+    background: "rgba(255, 255, 255, 0.05)",
+    padding: "2px 6px",
+    borderRadius: "4px"
+  },
+  
+  nameDetailLabel: {
+    color: "#94a3b8",
+    fontSize: "9px",
+    textTransform: "uppercase",
+    letterSpacing: "0.3px"
   },
   
   nameDetailValue: {
     color: "#cbd5e1",
     fontWeight: "500",
-    background: "rgba(255, 255, 255, 0.05)",
-    padding: "2px 6px",
-    borderRadius: "4px",
     fontSize: "10px"
   },
   
@@ -1420,9 +2097,22 @@ const styles = {
     fontSize: "12px",
     color: "#cbd5e1",
     fontWeight: "500",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
     '@media (max-width: 1024px)': {
       fontSize: '11px'
     }
+  },
+  
+  yearBadge: {
+    background: "rgba(16, 185, 129, 0.1)",
+    color: "#10b981",
+    fontSize: "10px",
+    padding: "2px 6px",
+    borderRadius: "4px",
+    display: "inline-block",
+    width: "fit-content"
   },
   
   ssnCell: {
@@ -1430,6 +2120,7 @@ const styles = {
     color: "#cbd5e1",
     fontWeight: "500",
     fontFamily: "monospace",
+    letterSpacing: "0.5px",
     '@media (max-width: 1024px)': {
       fontSize: '11px'
     }
@@ -1447,7 +2138,11 @@ const styles = {
     borderRadius: "10px",
     padding: "12px",
     marginBottom: "8px",
-    border: "1px solid rgba(255, 255, 255, 0.05)"
+    border: "1px solid rgba(255, 255, 255, 0.05)",
+    transition: "all 0.2s ease",
+    ':active': {
+      transform: "scale(0.98)"
+    }
   },
   
   mobileCardHeader: {
@@ -1501,17 +2196,50 @@ const styles = {
     wordBreak: "break-all"
   },
   
+  mobileNameBreakdown: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    marginTop: "8px",
+    paddingTop: "8px",
+    borderTop: "1px solid rgba(255, 255, 255, 0.05)"
+  },
+  
+  mobileNamePart: {
+    background: "rgba(102, 126, 234, 0.1)",
+    color: "#cbd5e1",
+    fontSize: "10px",
+    padding: "2px 8px",
+    borderRadius: "4px"
+  },
+  
   // Table Footer
   tableFooter: {
-    padding: "10px 16px",
-    fontSize: "11px",
-    color: "#64748b",
-    textAlign: "center",
-    background: "rgba(30, 41, 59, 0.8)",
+    padding: "12px 16px",
+    background: "rgba(30, 41, 59, 0.9)",
     borderTop: "1px solid rgba(255, 255, 255, 0.05)",
     '@media (max-width: 768px)': {
-      padding: '8px 12px',
-      fontSize: '10px'
+      padding: '10px 12px'
+    }
+  },
+  
+  tableFooterContent: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    '@media (max-width: 768px)': {
+      flexDirection: 'column',
+      gap: '4px',
+      alignItems: 'flex-start'
+    }
+  },
+  
+  tableFooterNote: {
+    fontSize: "10px",
+    color: "#64748b",
+    fontStyle: "italic",
+    '@media (max-width: 768px)': {
+      fontSize: '9px'
     }
   },
   
@@ -1527,65 +2255,141 @@ const styles = {
   },
   
   emptyStateIcon: {
-    fontSize: "48px",
-    marginBottom: "16px",
-    opacity: 0.5,
+    fontSize: "64px",
+    marginBottom: "20px",
+    opacity: 0.3,
+    animation: "float 3s ease-in-out infinite",
     '@media (max-width: 768px)': {
-      fontSize: '40px'
+      fontSize: '48px'
     }
   },
   
   emptyStateTitle: {
-    fontSize: "18px",
+    fontSize: "20px",
     color: "#ffffff",
-    margin: "0 0 8px 0",
+    margin: "0 0 12px 0",
     fontWeight: "600",
     '@media (max-width: 768px)': {
-      fontSize: '16px'
+      fontSize: '18px'
     }
   },
   
   emptyStateText: {
     fontSize: "14px",
     color: "#94a3b8",
-    maxWidth: "300px",
+    maxWidth: "400px",
     lineHeight: "1.5",
+    marginBottom: "24px",
     '@media (max-width: 768px)': {
       fontSize: '13px'
     }
   },
   
-  // Mobile Footer
-  mobileFooter: {
-    marginTop: "24px",
-    paddingTop: "16px",
+  emptyStateTips: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    maxWidth: "400px",
+    width: "100%"
+  },
+  
+  tipItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    background: "rgba(255, 255, 255, 0.05)",
+    padding: "12px",
+    borderRadius: "8px",
+    textAlign: "left"
+  },
+  
+  tipIcon: {
+    fontSize: "16px",
+    color: "#667eea",
+    flexShrink: 0
+  },
+  
+  tipText: {
+    fontSize: "12px",
+    color: "#cbd5e1",
+    lineHeight: "1.4"
+  },
+  
+  // Quick Actions
+  quickActions: {
+    display: "flex",
+    gap: "12px",
+    marginTop: "16px"
+  },
+  
+  quickActionButton: {
+    flex: 1,
+    background: "rgba(255, 255, 255, 0.05)",
+    border: "1px solid rgba(255, 255, 255, 0.1)",
+    color: "#cbd5e1",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "500",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    ':hover': {
+      background: "rgba(255, 255, 255, 0.1)",
+      transform: "translateY(-2px)"
+    }
+  },
+  
+  quickActionIcon: {
+    fontSize: "14px"
+  },
+  
+  // Footer
+  footer: {
+    marginTop: "32px",
+    paddingTop: "20px",
     borderTop: "1px solid rgba(255, 255, 255, 0.1)"
   },
   
-  mobileFooterContent: {
+  footerContent: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center"
-  },
-  
-  mobileFooterText: {
-    fontSize: "11px",
-    color: "#64748b"
-  },
-  
-  mobileProgress: {
-    display: "flex",
     alignItems: "center",
-    gap: "8px"
+    '@media (max-width: 768px)': {
+      flexDirection: 'column',
+      gap: '8px',
+      textAlign: 'center'
+    }
   },
   
-  mobileProgressText: {
+  footerText: {
+    fontSize: "12px",
+    color: "#64748b",
+    '@media (max-width: 768px)': {
+      fontSize: '11px'
+    }
+  },
+  
+  footerStats: {
     fontSize: "11px",
-    color: "#94a3b8"
+    color: "#94a3b8",
+    '@media (max-width: 768px)': {
+      fontSize: '10px'
+    }
+  },
+  
+  footerStat: {
+    display: "inline-block",
+    background: "rgba(255, 255, 255, 0.05)",
+    padding: "4px 8px",
+    borderRadius: "4px"
   }
 };
 
-// Add global styles with responsive media queries
+// Add global styles with enhanced animations
 const globalStyles = document.createElement('style');
 globalStyles.textContent = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -1600,6 +2404,8 @@ globalStyles.textContent = `
     margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   
   @keyframes spin {
@@ -1610,6 +2416,31 @@ globalStyles.textContent = `
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  @keyframes slideIn {
+    from { transform: translateX(100px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
   }
   
   input:checked + span {
@@ -1627,18 +2458,19 @@ globalStyles.textContent = `
   }
   
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   
   ::-webkit-scrollbar-track {
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 3px;
+    border-radius: 4px;
   }
   
   ::-webkit-scrollbar-thumb {
     background: rgba(102, 126, 234, 0.3);
-    border-radius: 3px;
+    border-radius: 4px;
+    transition: all 0.3s ease;
   }
   
   ::-webkit-scrollbar-thumb:hover {
@@ -1668,6 +2500,40 @@ globalStyles.textContent = `
     .no-print {
       display: none !important;
     }
+    
+    body {
+      background: white !important;
+      color: black !important;
+    }
+    
+    .card {
+      box-shadow: none !important;
+      border: 1px solid #ddd !important;
+    }
+  }
+  
+  /* Selection styles */
+  ::selection {
+    background: rgba(102, 126, 234, 0.3);
+    color: white;
+  }
+  
+  /* Focus styles */
+  :focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+  }
+  
+  /* Loading skeleton animation */
+  @keyframes loading {
+    0% { background-position: -200px 0; }
+    100% { background-position: calc(200px + 100%) 0; }
+  }
+  
+  .loading {
+    background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+    background-size: 200px 100%;
+    animation: loading 1.5s infinite;
   }
 `;
 document.head.appendChild(globalStyles);
