@@ -11,16 +11,21 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [fileFormat, setFileFormat] = useState("auto");
   const [sortOrder, setSortOrder] = useState("first-last");
+  const [outputMode, setOutputMode] = useState("combined"); // Added: combined, separate-genders, male-only, female-only
   const [filters, setFilters] = useState({
     minYear: 1940,
     maxYear: new Date().getFullYear(),
-    uniqueOnly: false
+    uniqueOnly: false,
+    genderFilter: "all",
   });
   const [stats, setStats] = useState({
     totalRecords: 0,
     validRecords: 0,
     duplicateRecords: 0,
-    invalidRecords: 0
+    invalidRecords: 0,
+    maleCount: 0,
+    femaleCount: 0,
+    unknownGenderCount: 0
   });
   const [copySuccess, setCopySuccess] = useState('');
   const fileInputRef = useRef(null);
@@ -47,6 +52,85 @@ export default function App() {
       setCopySuccess('❌ Failed to copy');
     }
   };
+
+  // Function to detect gender from name (heuristic approach)
+  const detectGenderFromName = useCallback((firstName) => {
+    if (!firstName) return "unknown";
+    
+    const femaleNames = [
+      "mary", "patricia", "jennifer", "linda", "elizabeth", "barbara", "susan", "jessica", 
+      "sarah", "karen", "lisa", "nancy", "betty", "sandra", "margaret", "ashley", "kimberly",
+      "emily", "donna", "michelle", "carol", "amanda", "melissa", "deborah", "stephanie",
+      "rebecca", "laura", "sharon", "cynthia", "kathleen", "amy", "shirley", "angela",
+      "helen", "anna", "brenda", "pamela", "nicole", "emma", "samantha", "katherine",
+      "christine", "debra", "rachel", "carolyn", "janet", "catherine", "maria", "heather",
+      "diane", "ruth", "julie", "olivia", "joyce", "virginia", "victoria", "lauren",
+      "martha", "cheryl", "megan", "andrea", "hannah", "judith", "sophia", "natalie",
+      "grace", "beverly", "kelly", "brittany", "madison", "alexis", "tiffany", "kayla",
+      "monica", "eleanor", "amber", "april", "barbra", "beatrice", "candice", "cassandra",
+      "catherine", "christina", "constance", "daisy", "diana", "eden", "fiona", "gabrielle",
+      "genevieve", "georgia", "gillian", "giselle", "gloria", "harriet", "hazel", "heidi",
+      "iris", "isabella", "ivy", "jacqueline", "jasmine", "joan", "jocelyn", "juliet",
+      "kaitlyn", "kelsey", "kristen", "lacey", "leona", "lillian", "loretta", "lucy",
+      "lydia", "mabel", "madeline", "margot", "marlene", "maureen", "mildred", "miriam",
+      "naomi", "nellie", "olga", "paige", "paula", "pearl", "phyllis", "priscilla",
+      "rita", "rosemary", "roxanne", "ruby", "sabrina", "serena", "sheila", "shelly",
+      "stella", "tamara", "tara", "teresa", "tina", "trisha", "ursula", "valerie",
+      "vanessa", "vera", "viola", "vivian", "wanda", "wendy", "winifred", "yolanda",
+      "yvonne", "zoe"
+    ];
+    
+    const maleNames = [
+      "james", "john", "robert", "michael", "william", "david", "richard", "joseph",
+      "thomas", "charles", "christopher", "daniel", "matthew", "anthony", "donald", 
+      "mark", "paul", "steven", "andrew", "kenneth", "joshua", "kevin", "brian", 
+      "george", "edward", "ronald", "timothy", "jason", "jeffrey", "ryan", "jacob",
+      "gary", "nicholas", "eric", "stephen", "jonathan", "larry", "justin", "scott",
+      "brandon", "benjamin", "samuel", "gregory", "frank", "alexander", "raymond",
+      "patrick", "jack", "dennis", "jerry", "tyler", "aaron", "henry", "douglas",
+      "peter", "adam", "nathan", "zachary", "walter", "kyle", "harold", "carl", 
+      "arthur", "gerald", "roger", "keith", "jeremy", "terry", "lawrence", "sean",
+      "christian", "albert", "joe", "ethan", "austin", "jesse", "billy", "bruce",
+      "bryan", "cody", "cameron", "gabe", "logan", "jordan", "dylan", "caleb",
+      "oscar", "martin", "leo", "theodore", "oscar", "marcus", "max", "leo",
+      "jerome", "clifford", "clarence", "barry", "antonio", "reginald", "manuel",
+      "leroy", "lloyd", "tommy", "leon", "derek", "warren", "darrell", "jerome",
+      "floyd", "leo", "alvin", "tim", "wesley", "gordon", "dean", "greg", "jorge",
+      "dustin", "pedro", "derrick", "dan", "lewis", "zachary", "corey", "herman",
+      "maurice", "vernon", "roberto", "clyde", "glen", "hector", "shane", "ricardo",
+      "sam", "rick", "lester", "brent", "ramon", "charlie", "tyler", "gilbert",
+      "gene", "marc", "reginald", "ruben", "brett", "angel", "nathaniel", "rafael",
+      "leslie", "edgar", "milton", "raul", "ben", "chester", "cecil", "duane",
+      "elmer", "brad", "virgil", "marshall", "eli", "claude", "alfonso", "mitch",
+      "armando", "salvador", "perry", "kirk", "sergio", "marion", "tracy", "seth",
+      "kent", "terrance", "rene", "eduardo", "terrence", "enrique"
+    ];
+    
+    const lowerFirstName = firstName.toLowerCase();
+    
+    // Check if name ends with common gender-specific suffixes
+    if (lowerFirstName.endsWith('a') || lowerFirstName.endsWith('e') || 
+        lowerFirstName.endsWith('elle') || lowerFirstName.endsWith('ette') ||
+        lowerFirstName.endsWith('lyn') || lowerFirstName.endsWith('lene') ||
+        lowerFirstName.endsWith('ine') || lowerFirstName.endsWith('ice') ||
+        lowerFirstName.endsWith('anna') || lowerFirstName.endsWith('beth')) {
+      return "female";
+    }
+    
+    if (lowerFirstName.endsWith('o') || lowerFirstName.endsWith('us') || 
+        lowerFirstName.endsWith('er') || lowerFirstName.endsWith('son') ||
+        lowerFirstName.endsWith('ton') || lowerFirstName.endsWith('bert') ||
+        lowerFirstName.endsWith('ard') || lowerFirstName.endsWith('fred') ||
+        lowerFirstName.endsWith('mond') || lowerFirstName.endsWith('vin')) {
+      return "male";
+    }
+    
+    // Check against known name lists
+    if (femaleNames.includes(lowerFirstName)) return "female";
+    if (maleNames.includes(lowerFirstName)) return "male";
+    
+    return "unknown";
+  }, []);
 
   const extractFirstAndLastName = useCallback((fullName) => {
     const parts = fullName.trim().split(" ");
@@ -80,7 +164,10 @@ export default function App() {
       totalRecords: 0,
       validRecords: 0,
       duplicateRecords: 0,
-      invalidRecords: 0
+      invalidRecords: 0,
+      maleCount: 0,
+      femaleCount: 0,
+      unknownGenderCount: 0
     });
   }, []);
 
@@ -131,12 +218,15 @@ export default function App() {
       const cutoff = new Date(`${filters.minYear}-01-01`);
       const maxDate = new Date(`${filters.maxYear}-12-31`);
       const seenKeys = new Set();
-      const output = [];
+      const allRecords = [];
       const stats = {
         totalRecords: 0,
         validRecords: 0,
         duplicateRecords: 0,
-        invalidRecords: 0
+        invalidRecords: 0,
+        maleCount: 0,
+        femaleCount: 0,
+        unknownGenderCount: 0
       };
       
       const totalChunks = Math.ceil(lines.length / CHUNK_SIZE);
@@ -197,9 +287,27 @@ export default function App() {
               }
               
               const { firstName, lastName, middleName } = extractFirstAndLastName(name);
+              const gender = detectGenderFromName(firstName);
+              
+              // Count genders
+              if (gender === "male") {
+                stats.maleCount++;
+              } else if (gender === "female") {
+                stats.femaleCount++;
+              } else {
+                stats.unknownGenderCount++;
+              }
+              
+              // Apply gender filter based on output mode
+              if (outputMode === "male-only" && gender !== "male") {
+                continue;
+              } else if (outputMode === "female-only" && gender !== "female") {
+                continue;
+              }
+              
               seenKeys.add(key);
-              output.push({ 
-                name, dob, ssn, firstName, lastName, middleName, year: dobDate.getFullYear()
+              allRecords.push({ 
+                name, dob, ssn, firstName, lastName, middleName, year: dobDate.getFullYear(), gender
               });
               stats.validRecords++;
             }
@@ -215,55 +323,80 @@ export default function App() {
       }
 
       setStats(stats);
-      return output;
+      return allRecords;
     };
 
     try {
       const text = await file.text();
-      const output = await processFileChunked(text);
+      const allRecords = await processFileChunked(text);
 
-      output.sort((a, b) => {
-        if (sortOrder === "last-first") {
-          const lastNameCompare = a.lastName.localeCompare(b.lastName);
-          if (lastNameCompare !== 0) return lastNameCompare;
-          const firstNameCompare = a.firstName.localeCompare(b.firstName);
-          if (firstNameCompare !== 0) return firstNameCompare;
-        } else if (sortOrder === "dob") {
+      // Separate records by gender
+      const maleRecords = allRecords.filter(r => r.gender === "male");
+      const femaleRecords = allRecords.filter(r => r.gender === "female");
+      const unknownRecords = allRecords.filter(r => r.gender === "unknown");
+
+      // Sort each group
+      const sortRecords = (records) => {
+        return [...records].sort((a, b) => {
+          if (sortOrder === "last-first") {
+            const lastNameCompare = a.lastName.localeCompare(b.lastName);
+            if (lastNameCompare !== 0) return lastNameCompare;
+            const firstNameCompare = a.firstName.localeCompare(b.firstName);
+            if (firstNameCompare !== 0) return firstNameCompare;
+          } else if (sortOrder === "dob") {
+            const dateA = new Date(a.dob);
+            const dateB = new Date(b.dob);
+            if (dateA < dateB) return -1;
+            if (dateA > dateB) return 1;
+            const lastNameCompare = a.lastName.localeCompare(b.lastName);
+            if (lastNameCompare !== 0) return lastNameCompare;
+          } else {
+            const firstNameCompare = a.firstName.localeCompare(b.firstName);
+            if (firstNameCompare !== 0) return firstNameCompare;
+            const lastNameCompare = a.lastName.localeCompare(b.lastName);
+            if (lastNameCompare !== 0) return lastNameCompare;
+          }
+          
           const dateA = new Date(a.dob);
           const dateB = new Date(b.dob);
           if (dateA < dateB) return -1;
           if (dateA > dateB) return 1;
-          const lastNameCompare = a.lastName.localeCompare(b.lastName);
-          if (lastNameCompare !== 0) return lastNameCompare;
-        } else {
-          const firstNameCompare = a.firstName.localeCompare(b.firstName);
-          if (firstNameCompare !== 0) return firstNameCompare;
-          const lastNameCompare = a.lastName.localeCompare(b.lastName);
-          if (lastNameCompare !== 0) return lastNameCompare;
-        }
-        
-        const dateA = new Date(a.dob);
-        const dateB = new Date(b.dob);
-        if (dateA < dateB) return -1;
-        if (dateA > dateB) return 1;
-        return a.ssn.localeCompare(b.ssn);
-      });
+          return a.ssn.localeCompare(b.ssn);
+        });
+      };
 
-      setResults(output);
+      const sortedMale = sortRecords(maleRecords);
+      const sortedFemale = sortRecords(femaleRecords);
+      const sortedUnknown = sortRecords(unknownRecords);
+
+      // Combine based on output mode
+      let finalResults = [];
+      if (outputMode === "combined") {
+        finalResults = [...sortedMale, ...sortedFemale, ...sortedUnknown];
+      } else if (outputMode === "separate-genders") {
+        // For display purposes, show combined but we'll save separately
+        finalResults = [...sortedMale, ...sortedFemale, ...sortedUnknown];
+      } else if (outputMode === "male-only") {
+        finalResults = sortedMale;
+      } else if (outputMode === "female-only") {
+        finalResults = sortedFemale;
+      }
+
+      setResults(finalResults);
       setProgress(100);
-      setStatus(`✅ ${output.length.toLocaleString()} records sorted successfully`);
+      setStatus(`✅ ${finalResults.length.toLocaleString()} records sorted successfully`);
     } catch (error) {
       setStatus(`❌ Error: ${error.message}`);
     } finally {
       setProcessing(false);
     }
-  }, [file, fileFormat, sortOrder, filters, detectFileFormat, validateRecord, parseDate, extractFirstAndLastName]);
+  }, [file, fileFormat, sortOrder, filters, outputMode, detectFileFormat, validateRecord, parseDate, extractFirstAndLastName, detectGenderFromName]);
 
-  const generateContentWithSeparators = useCallback(() => {
-    if (results.length === 0) return "";
+  const generateContentWithSeparators = useCallback((records) => {
+    if (records.length === 0) return "";
     const contentLines = [];
     let currentFullName = "";
-    results.forEach((row, index) => {
+    records.forEach((row, index) => {
       const { firstName, lastName } = extractFirstAndLastName(row.name);
       const fullName = `${firstName} ${lastName}`;
       if (includeSeparators && fullName !== currentFullName) {
@@ -273,18 +406,74 @@ export default function App() {
       contentLines.push(`${row.name}|${row.dob}|${row.ssn}`);
     });
     return contentLines.join("\n");
-  }, [results, extractFirstAndLastName, includeSeparators]);
+  }, [extractFirstAndLastName, includeSeparators]);
 
-  const generateContentWithoutSeparators = useCallback(() => {
-    return results.map(r => `${r.name}|${r.dob}|${r.ssn}`).join("\n");
-  }, [results]);
+  const generateContentWithoutSeparators = useCallback((records) => {
+    return records.map(r => `${r.name}|${r.dob}|${r.ssn}`).join("\n");
+  }, []);
 
   const saveFile = useCallback(() => {
     if (results.length === 0) return;
-    const content = includeSeparators ? generateContentWithSeparators() : generateContentWithoutSeparators();
+    
+    const maleRecords = results.filter(r => r.gender === "male");
+    const femaleRecords = results.filter(r => r.gender === "female");
+    const unknownRecords = results.filter(r => r.gender === "unknown");
+    
+    let content = "";
+    let finalName = "";
     const base = fileName.replace(/\.txt$/i, "");
-    const suffix = includeSeparators ? "_sorted_with_separators" : "_sorted";
-    const finalName = `${base}${suffix}.txt`;
+    
+    if (outputMode === "separate-genders") {
+      // Create a zip file with separate gender files
+      const maleContent = includeSeparators ? 
+        generateContentWithSeparators(maleRecords) : 
+        generateContentWithoutSeparators(maleRecords);
+      
+      const femaleContent = includeSeparators ? 
+        generateContentWithSeparators(femaleRecords) : 
+        generateContentWithoutSeparators(femaleRecords);
+      
+      const unknownContent = includeSeparators ? 
+        generateContentWithSeparators(unknownRecords) : 
+        generateContentWithoutSeparators(unknownRecords);
+      
+      // Combine all in one file with section headers
+      const sections = [];
+      
+      if (maleRecords.length > 0) {
+        sections.push("========== MALE RECORDS ==========");
+        sections.push(maleContent);
+      }
+      
+      if (femaleRecords.length > 0) {
+        sections.push("========== FEMALE RECORDS ==========");
+        sections.push(femaleContent);
+      }
+      
+      if (unknownRecords.length > 0) {
+        sections.push("========== UNKNOWN GENDER ==========");
+        sections.push(unknownContent);
+      }
+      
+      content = sections.join("\n\n");
+      const suffix = includeSeparators ? "_sorted_by_gender" : "_sorted_by_gender_no_separators";
+      finalName = `${base}${suffix}.txt`;
+    } else {
+      // Single file for other modes
+      const recordsToSave = outputMode === "male-only" ? maleRecords :
+                           outputMode === "female-only" ? femaleRecords :
+                           results;
+      
+      content = includeSeparators ? 
+        generateContentWithSeparators(recordsToSave) : 
+        generateContentWithoutSeparators(recordsToSave);
+      
+      const suffix = includeSeparators ? 
+        `_sorted_${outputMode.replace("-only", "")}` : 
+        `_sorted_${outputMode.replace("-only", "")}_no_separators`;
+      finalName = `${base}${suffix}.txt`;
+    }
+    
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -294,6 +483,70 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    
+    setStatus(`✅ File saved as: ${finalName}`);
+  }, [results, fileName, includeSeparators, outputMode, generateContentWithSeparators, generateContentWithoutSeparators]);
+
+  const saveSeparateGenderFiles = useCallback(() => {
+    if (results.length === 0) return;
+    
+    const maleRecords = results.filter(r => r.gender === "male");
+    const femaleRecords = results.filter(r => r.gender === "female");
+    const unknownRecords = results.filter(r => r.gender === "unknown");
+    const base = fileName.replace(/\.txt$/i, "");
+    
+    // Save male file
+    if (maleRecords.length > 0) {
+      const maleContent = includeSeparators ? 
+        generateContentWithSeparators(maleRecords) : 
+        generateContentWithoutSeparators(maleRecords);
+      const maleFileName = `${base}_male${includeSeparators ? "_with_separators" : ""}.txt`;
+      const blob = new Blob([maleContent], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = maleFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    
+    // Save female file
+    if (femaleRecords.length > 0) {
+      const femaleContent = includeSeparators ? 
+        generateContentWithSeparators(femaleRecords) : 
+        generateContentWithoutSeparators(femaleRecords);
+      const femaleFileName = `${base}_female${includeSeparators ? "_with_separators" : ""}.txt`;
+      const blob = new Blob([femaleContent], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = femaleFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    
+    // Save unknown file if there are any
+    if (unknownRecords.length > 0) {
+      const unknownContent = includeSeparators ? 
+        generateContentWithSeparators(unknownRecords) : 
+        generateContentWithoutSeparators(unknownRecords);
+      const unknownFileName = `${base}_unknown_gender${includeSeparators ? "_with_separators" : ""}.txt`;
+      const blob = new Blob([unknownContent], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = unknownFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    
+    setStatus(`✅ Saved ${maleRecords.length > 0 ? 'male, ' : ''}${femaleRecords.length > 0 ? 'female, ' : ''}${unknownRecords.length > 0 ? 'unknown gender ' : ''}files`);
   }, [results, fileName, includeSeparators, generateContentWithSeparators, generateContentWithoutSeparators]);
 
   const resetApp = useCallback(() => {
@@ -303,7 +556,7 @@ export default function App() {
     setStatus("");
     setResults([]);
     setProcessing(false);
-    setStats({ totalRecords: 0, validRecords: 0, duplicateRecords: 0, invalidRecords: 0 });
+    setStats({ totalRecords: 0, validRecords: 0, duplicateRecords: 0, invalidRecords: 0, maleCount: 0, femaleCount: 0, unknownGenderCount: 0 });
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -344,6 +597,14 @@ export default function App() {
       distribution[year] = (distribution[year] || 0) + 1;
     });
     return Object.entries(distribution).sort(([a], [b]) => a - b).slice(0, 5);
+  }, [results]);
+
+  // Gender distribution for stats banner
+  const genderDistribution = useMemo(() => {
+    const male = results.filter(r => r.gender === "male").length;
+    const female = results.filter(r => r.gender === "female").length;
+    const unknown = results.filter(r => r.gender === "unknown").length;
+    return { male, female, unknown };
   }, [results]);
 
   return (
@@ -396,6 +657,18 @@ export default function App() {
             <div style={styles.statItem}>
               <span style={styles.statItemLabel}>Valid:</span>
               <span style={styles.statItemValueSuccess}>{stats.validRecords}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Male:</span>
+              <span style={styles.statItemValueMale}>{stats.maleCount}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Female:</span>
+              <span style={styles.statItemValueFemale}>{stats.femaleCount}</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statItemLabel}>Unknown:</span>
+              <span style={styles.statItemValue}>{stats.unknownGenderCount}</span>
             </div>
             <div style={styles.statItem}>
               <span style={styles.statItemLabel}>Duplicates:</span>
@@ -459,7 +732,7 @@ export default function App() {
               </label>
             </div>
 
-            {/* Donation Section - Added here */}
+            {/* Donation Section */}
             <div style={styles.donateCard}>
               <h3 style={styles.cardTitle}>💝 Support the Project</h3>
               <p style={styles.donateText}>Scan or copy the address to donate USDT (TRC-20)</p>
@@ -519,6 +792,23 @@ export default function App() {
                       <input type="radio" name="sortOrder" value={order} checked={sortOrder === order} onChange={(e) => setSortOrder(e.target.value)} style={styles.radioInput} disabled={processing} />
                       <span style={styles.radioText}>
                         {order === "first-last" ? "First → Last" : order === "last-first" ? "Last → First" : "Date of Birth"}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={styles.settingGroup}>
+                <label style={styles.settingGroupLabel}>Output Mode</label>
+                <div style={styles.radioGroup}>
+                  {["combined", "separate-genders", "male-only", "female-only"].map(mode => (
+                    <label key={mode} style={styles.radioLabel}>
+                      <input type="radio" name="outputMode" value={mode} checked={outputMode === mode} onChange={(e) => setOutputMode(e.target.value)} style={styles.radioInput} disabled={processing} />
+                      <span style={styles.radioText}>
+                        {mode === "combined" ? "All in One File" : 
+                         mode === "separate-genders" ? "Separate by Gender (Single File)" : 
+                         mode === "male-only" ? "Male Records Only" : 
+                         "Female Records Only"}
                       </span>
                     </label>
                   ))}
@@ -592,21 +882,44 @@ export default function App() {
               </div>
 
               {results.length > 0 && (
-                <button onClick={saveFile} style={{ ...styles.button, ...styles.successButton, ...(isMobile && styles.mobileButton), marginTop: '16px' }}>
-                  <div style={styles.buttonContent}>
-                    <div style={styles.buttonIcon}>💾</div>
-                    <div style={styles.saveButtonText}>
-                      <div style={styles.saveButtonMain}>
-                        {isMobile ? "Download" : "Download Sorted File"}
-                      </div>
-                      {!isMobile && (
-                        <div style={styles.saveButtonSub}>
-                          {results.length.toLocaleString()} records • {includeSeparators ? "With separators" : "No separators"}
+                <div style={styles.saveButtonsContainer}>
+                  <button onClick={saveFile} style={{ ...styles.button, ...styles.successButton, ...(isMobile && styles.mobileButton), marginBottom: '8px' }}>
+                    <div style={styles.buttonContent}>
+                      <div style={styles.buttonIcon}>💾</div>
+                      <div style={styles.saveButtonText}>
+                        <div style={styles.saveButtonMain}>
+                          {outputMode === "separate-genders" ? "Download Single File (All Genders)" : 
+                           outputMode === "male-only" ? "Download Male Records" :
+                           outputMode === "female-only" ? "Download Female Records" :
+                           "Download Combined File"}
                         </div>
-                      )}
+                        {!isMobile && (
+                          <div style={styles.saveButtonSub}>
+                            {results.length.toLocaleString()} records • {includeSeparators ? "With separators" : "No separators"}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  
+                  {outputMode === "separate-genders" && (
+                    <button onClick={saveSeparateGenderFiles} style={{ ...styles.button, ...styles.infoButton, ...(isMobile && styles.mobileButton) }}>
+                      <div style={styles.buttonContent}>
+                        <div style={styles.buttonIcon}>📁</div>
+                        <div style={styles.saveButtonText}>
+                          <div style={styles.saveButtonMain}>
+                            Download Separate Gender Files
+                          </div>
+                          {!isMobile && (
+                            <div style={styles.saveButtonSub}>
+                              Creates individual files for Male, Female, and Unknown
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -622,24 +935,26 @@ export default function App() {
                     <div style={styles.resultsStats}>
                       <div style={styles.resultsStat}>
                         <div style={styles.resultsStatValue}>{results.length}</div>
-                        <div style={styles.resultsStatLabel}>Records</div>
+                        <div style={styles.resultsStatLabel}>Total</div>
                       </div>
-                      {!isMobile && (
-                        <>
-                          <div style={styles.resultsStat}>
-                            <div style={styles.resultsStatValue}>
-                              {new Set(results.map(r => `${r.firstName} ${r.lastName}`)).size}
-                            </div>
-                            <div style={styles.resultsStatLabel}>Unique Names</div>
-                          </div>
-                          <div style={styles.resultsStat}>
-                            <div style={styles.resultsStatValue}>
-                              {new Set(results.map(r => r.year)).size}
-                            </div>
-                            <div style={styles.resultsStatLabel}>Years</div>
-                          </div>
-                        </>
-                      )}
+                      <div style={styles.resultsStat}>
+                        <div style={{ ...styles.resultsStatValue, color: '#3b82f6' }}>
+                          {genderDistribution.male}
+                        </div>
+                        <div style={styles.resultsStatLabel}>Male</div>
+                      </div>
+                      <div style={styles.resultsStat}>
+                        <div style={{ ...styles.resultsStatValue, color: '#ec4899' }}>
+                          {genderDistribution.female}
+                        </div>
+                        <div style={styles.resultsStatLabel}>Female</div>
+                      </div>
+                      <div style={styles.resultsStat}>
+                        <div style={{ ...styles.resultsStatValue, color: '#94a3b8' }}>
+                          {genderDistribution.unknown}
+                        </div>
+                        <div style={styles.resultsStatLabel}>Unknown</div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -677,6 +992,7 @@ export default function App() {
                         <div style={styles.tableHeaderCell}>Full Name</div>
                         <div style={styles.tableHeaderCell}>DOB</div>
                         <div style={styles.tableHeaderCell}>SSN</div>
+                        <div style={styles.tableHeaderCell}>Gender</div>
                       </div>
                       
                       <div style={styles.tableBody}>
@@ -717,6 +1033,28 @@ export default function App() {
                                 {item.ssn}
                               </div>
                             </div>
+                            <div style={styles.dataCell}>
+                              <div style={{
+                                ...styles.genderBadge,
+                                background: item.gender === "male" 
+                                  ? "rgba(59, 130, 246, 0.1)" 
+                                  : item.gender === "female" 
+                                  ? "rgba(236, 72, 153, 0.1)" 
+                                  : "rgba(107, 114, 128, 0.1)",
+                                color: item.gender === "male" 
+                                  ? "#3b82f6" 
+                                  : item.gender === "female" 
+                                  ? "#ec4899" 
+                                  : "#6b7280",
+                                border: item.gender === "male" 
+                                  ? "1px solid rgba(59, 130, 246, 0.3)" 
+                                  : item.gender === "female" 
+                                  ? "1px solid rgba(236, 72, 153, 0.3)" 
+                                  : "1px solid rgba(107, 114, 128, 0.3)"
+                              }}>
+                                {item.gender === "male" ? "♂ Male" : item.gender === "female" ? "♀ Female" : "Unknown"}
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -728,6 +1066,21 @@ export default function App() {
                           <div style={styles.mobileCardHeader}>
                             <div style={styles.mobileCardNumber}>{index + 1}</div>
                             <div style={styles.mobileCardTitle}>{item.name}</div>
+                            <div style={{
+                              ...styles.mobileGenderBadge,
+                              background: item.gender === "male" 
+                                ? "rgba(59, 130, 246, 0.1)" 
+                                : item.gender === "female" 
+                                ? "rgba(236, 72, 153, 0.1)" 
+                                : "rgba(107, 114, 128, 0.1)",
+                              color: item.gender === "male" 
+                                ? "#3b82f6" 
+                                : item.gender === "female" 
+                                ? "#ec4899" 
+                                : "#6b7280"
+                            }}>
+                              {item.gender === "male" ? "♂" : item.gender === "female" ? "♀" : "?"}
+                            </div>
                           </div>
                           <div style={styles.mobileCardDetails}>
                             <div style={styles.mobileDetail}>
@@ -742,6 +1095,16 @@ export default function App() {
                               <span style={styles.mobileNamePart}>{item.firstName}</span>
                               {item.middleName && <span style={styles.mobileNamePart}>{item.middleName}</span>}
                               <span style={styles.mobileNamePart}>{item.lastName}</span>
+                              <span style={{
+                                ...styles.mobileGenderText,
+                                color: item.gender === "male" 
+                                  ? "#3b82f6" 
+                                  : item.gender === "female" 
+                                  ? "#ec4899" 
+                                  : "#6b7280"
+                              }}>
+                                {item.gender === "male" ? "Male" : item.gender === "female" ? "Female" : "Unknown Gender"}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -754,7 +1117,11 @@ export default function App() {
                       <div style={styles.tableFooterContent}>
                         <span>Showing {previewRows.length} of {results.length.toLocaleString()} records</span>
                         <span style={styles.tableFooterNote}>
-                          {sortOrder === "first-last" ? "Sorted by First Name → Last Name" : sortOrder === "last-first" ? "Sorted by Last Name → First Name" : "Sorted by Date of Birth"}
+                          {outputMode === "combined" ? "All records in one file" : 
+                           outputMode === "separate-genders" ? "Records grouped by gender in one file" :
+                           outputMode === "male-only" ? "Male records only" :
+                           "Female records only"} • 
+                          {includeSeparators ? " With separators" : " No separators"}
                         </span>
                       </div>
                     </div>
@@ -769,8 +1136,12 @@ export default function App() {
                   </p>
                   <div style={styles.emptyStateTips}>
                     <div style={styles.tipItem}>
+                      <span style={styles.tipIcon}>👤</span>
+                      <span style={styles.tipText}>Now with advanced gender-based compilation</span>
+                    </div>
+                    <div style={styles.tipItem}>
                       <span style={styles.tipIcon}>💡</span>
-                      <span style={styles.tipText}>Supports both tab and pipe separated formats</span>
+                      <span style={styles.tipText}>Choose to combine all records or separate by gender</span>
                     </div>
                     <div style={styles.tipItem}>
                       <span style={styles.tipIcon}>⚙️</span>
@@ -783,13 +1154,32 @@ export default function App() {
 
             {results.length > 0 && !isMobile && (
               <div style={styles.quickActions}>
-                <button onClick={() => navigator.clipboard.writeText(includeSeparators ? generateContentWithSeparators() : generateContentWithoutSeparators())} style={styles.quickActionButton}>
-                  <div style={styles.quickActionIcon}>📋</div>
-                  <span>Copy to Clipboard</span>
+                <button onClick={() => {
+                  const male = results.filter(r => r.gender === "male").length;
+                  const female = results.filter(r => r.gender === "female").length;
+                  const unknown = results.filter(r => r.gender === "unknown").length;
+                  const total = results.length;
+                  alert(`Gender Distribution:\n\nMale: ${male} (${((male/total)*100).toFixed(1)}%)\nFemale: ${female} (${((female/total)*100).toFixed(1)}%)\nUnknown: ${unknown} (${((unknown/total)*100).toFixed(1)}%)\n\nTotal: ${total} records`);
+                }} style={styles.quickActionButton}>
+                  <div style={styles.quickActionIcon}>📈</div>
+                  <span>Gender Stats</span>
                 </button>
-                <button onClick={() => window.print()} style={styles.quickActionButton}>
-                  <div style={styles.quickActionIcon}>🖨️</div>
-                  <span>Print Preview</span>
+                
+                <button onClick={() => {
+                  const maleRecords = results.filter(r => r.gender === "male");
+                  const femaleRecords = results.filter(r => r.gender === "female");
+                  const unknownRecords = results.filter(r => r.gender === "unknown");
+                  
+                  const maleContent = maleRecords.map(r => `${r.name}|${r.dob}|${r.ssn}`).join("\n");
+                  const femaleContent = femaleRecords.map(r => `${r.name}|${r.dob}|${r.ssn}`).join("\n");
+                  const unknownContent = unknownRecords.map(r => `${r.name}|${r.dob}|${r.ssn}`).join("\n");
+                  
+                  const combinedContent = `MALE RECORDS (${maleRecords.length}):\n${maleContent}\n\nFEMALE RECORDS (${femaleRecords.length}):\n${femaleContent}\n\nUNKNOWN GENDER (${unknownRecords.length}):\n${unknownContent}`;
+                  navigator.clipboard.writeText(combinedContent);
+                  alert(`Copied all records to clipboard!\n\nMale: ${maleRecords.length}\nFemale: ${femaleRecords.length}\nUnknown: ${unknownRecords.length}`);
+                }} style={styles.quickActionButton}>
+                  <div style={styles.quickActionIcon}>📋</div>
+                  <span>Copy All</span>
                 </button>
               </div>
             )}
@@ -799,7 +1189,7 @@ export default function App() {
         <footer style={styles.footer}>
           <div style={styles.footerContent}>
             <span style={styles.footerText}>
-              Mosort Pro v2.0 • Advanced File Processor • {isMobile ? "Mobile" : "Desktop"} Mode
+              Mosort Pro v2.2 • Advanced Gender-Based File Compiler • {isMobile ? "Mobile" : "Desktop"} Mode
             </span>
             <div style={styles.footerStats}>
               {processing && (
@@ -815,6 +1205,7 @@ export default function App() {
   );
 }
 
+// Updated styles to include new elements
 const styles = {
   page: {
     minHeight: "100vh",
@@ -849,6 +1240,8 @@ const styles = {
   statItemValueSuccess: { fontSize: '14px', fontWeight: '700', color: '#10b981', '@media (max-width: 768px)': { fontSize: '13px' } },
   statItemValueWarning: { fontSize: '14px', fontWeight: '700', color: '#f59e0b', '@media (max-width: 768px)': { fontSize: '13px' } },
   statItemValueError: { fontSize: '14px', fontWeight: '700', color: '#ef4444', '@media (max-width: 768px)': { fontSize: '13px' } },
+  statItemValueMale: { fontSize: '14px', fontWeight: '700', color: '#3b82f6', '@media (max-width: 768px)': { fontSize: '13px' } },
+  statItemValueFemale: { fontSize: '14px', fontWeight: '700', color: '#ec4899', '@media (max-width: 768px)': { fontSize: '13px' } },
   
   card: {
     background: "rgba(30, 41, 59, 0.9)", backdropFilter: "blur(10px)", borderRadius: "20px",
@@ -966,7 +1359,6 @@ const styles = {
     '@media (max-width: 768px)': { fontSize: '10px' }
   },
   
-  // Donation Card Styles - Added these
   donateCard: {
     background: "rgba(30, 41, 59, 0.6)",
     borderRadius: "16px",
@@ -1045,7 +1437,6 @@ const styles = {
     fontStyle: "italic"
   },
   
-  // Rest of the styles remain the same
   settingsCard: {
     background: "rgba(30, 41, 59, 0.6)", borderRadius: "16px", padding: "20px",
     border: "1px solid rgba(255, 255, 255, 0.05)", boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
@@ -1142,6 +1533,11 @@ const styles = {
     boxShadow: "0 4px 20px rgba(16, 185, 129, 0.4)", ':hover': { transform: "translateY(-2px)", boxShadow: "0 8px 30px rgba(16, 185, 129, 0.5)" }
   },
   
+  infoButton: {
+    background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)", color: "white",
+    boxShadow: "0 4px 20px rgba(59, 130, 246, 0.4)", ':hover': { transform: "translateY(-2px)", boxShadow: "0 8px 30px rgba(59, 130, 246, 0.5)" }
+  },
+  
   disabledButton: {
     opacity: 0.6, cursor: "not-allowed", ':hover': { transform: "none", boxShadow: "0 4px 20px rgba(102, 126, 234, 0.4)" }
   },
@@ -1153,6 +1549,12 @@ const styles = {
     width: "18px", height: "18px", border: "2px solid rgba(255,255,255,0.3)",
     borderTop: "2px solid white", borderRadius: "50%", animation: "spin 1s linear infinite",
     '@media (max-width: 768px)': { width: '16px', height: '16px' }
+  },
+  
+  saveButtonsContainer: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px"
   },
   
   saveButtonText: { display: "flex", flexDirection: "column", alignItems: "flex-start", textAlign: "left" },
@@ -1254,11 +1656,11 @@ const styles = {
   },
   
   tableHeader: {
-    display: "grid", gridTemplateColumns: "60px 1fr 120px 140px",
+    display: "grid", gridTemplateColumns: "60px 1fr 120px 140px 100px",
     background: "rgba(30, 41, 59, 0.9)", padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.05)", position: "sticky",
     top: 0, zIndex: 10, backdropFilter: "blur(10px)",
-    '@media (max-width: 1024px)': { gridTemplateColumns: '50px 1fr 100px 120px' }
+    '@media (max-width: 1024px)': { gridTemplateColumns: '50px 1fr 100px 120px 90px' }
   },
   
   tableHeaderCell: {
@@ -1270,11 +1672,11 @@ const styles = {
   tableBody: { flex: 1, overflowY: "auto", maxHeight: "400px" },
   
   dataRow: {
-    display: "grid", gridTemplateColumns: "60px 1fr 120px 140px", padding: "12px 16px",
+    display: "grid", gridTemplateColumns: "60px 1fr 120px 140px 100px", padding: "12px 16px",
     borderBottom: "1px solid rgba(255, 255, 255, 0.03)", transition: "all 0.2s ease",
     ':hover': { background: "rgba(255, 255, 255, 0.02)", transform: "translateX(4px)" },
     ':nth-child(odd)': { background: "rgba(255, 255, 255, 0.01)" },
-    '@media (max-width: 1024px)': { gridTemplateColumns: '50px 1fr 100px 120px', padding: '10px 12px' }
+    '@media (max-width: 1024px)': { gridTemplateColumns: '50px 1fr 100px 120px 90px', padding: '10px 12px' }
   },
   
   dataCell: { display: "flex", alignItems: "center" },
@@ -1321,6 +1723,12 @@ const styles = {
     letterSpacing: "0.5px", '@media (max-width: 1024px)': { fontSize: '11px' }
   },
   
+  genderBadge: {
+    padding: "4px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "600",
+    display: "inline-flex", alignItems: "center", gap: "4px", textTransform: "capitalize",
+    transition: "all 0.2s ease"
+  },
+  
   mobileList: { flex: 1, overflowY: "auto", padding: "8px" },
   
   mobileCard: {
@@ -1342,6 +1750,12 @@ const styles = {
     flex: 1, wordBreak: "break-word"
   },
   
+  mobileGenderBadge: {
+    padding: "4px 8px", borderRadius: "6px", fontSize: "12px", fontWeight: "600",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: "28px", height: "28px"
+  },
+  
   mobileCardDetails: { display: "flex", flexDirection: "column", gap: "6px" },
   
   mobileDetail: { display: "flex", gap: "8px", fontSize: "12px" },
@@ -1356,6 +1770,11 @@ const styles = {
   mobileNamePart: {
     background: "rgba(102, 126, 234, 0.1)", color: "#cbd5e1",
     fontSize: "10px", padding: "2px 8px", borderRadius: "4px"
+  },
+  
+  mobileGenderText: {
+    fontSize: "10px", fontWeight: "600", padding: "2px 8px", borderRadius: "4px",
+    background: "rgba(255, 255, 255, 0.05)"
   },
   
   tableFooter: {
